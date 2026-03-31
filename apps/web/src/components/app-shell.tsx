@@ -6,14 +6,16 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { useAuth } from "./auth-provider";
 import ChatWidget from "./chat-widget";
+import { openChat } from "../lib/chat-events";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/properties", label: "Properties" },
-  { href: "/tenants", label: "Tenants" },
-  { href: "/expenses", label: "Expenses" },
-  { href: "/analytics", label: "Analytics" },
-  { href: "/documents", label: "Documents" }
+  { href: "/dashboard", label: "Dashboard", type: "link" as const },
+  { href: "/properties", label: "Properties", type: "link" as const },
+  { href: "/tenants", label: "Tenants", type: "link" as const },
+  { href: "/expenses", label: "Expenses", type: "link" as const },
+  { href: "/analytics", label: "Analytics", type: "link" as const },
+  { href: "/documents", label: "Documents", type: "link" as const },
+  { label: "AI Assistant ✨", type: "action" as const }
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -88,6 +90,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="mt-8 flex flex-wrap gap-3">
           {navItems.map((item) => {
+            if (item.type === "action") {
+              return (
+                <button
+                  key={item.label}
+                  onClick={openChat}
+                  className="rounded-full border border-indigo-300/40 bg-gradient-to-r from-indigo-500/20 via-slate-900/60 to-cyan-500/20 px-4 py-2 text-sm text-indigo-100 transition hover:border-cyan-300/70"
+                >
+                  {item.label}
+                </button>
+              );
+            }
+
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link

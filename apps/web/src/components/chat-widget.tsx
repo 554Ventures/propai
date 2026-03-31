@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { Button } from "./ui/button";
+import { CHAT_OPEN_EVENT, CHAT_SEND_EVENT } from "../lib/chat-events";
 
 const STORAGE_KEY = "propai_chat_session_id";
 
@@ -78,7 +79,13 @@ export default function ChatWidget() {
         if (data.sessionId) {
           localStorage.setItem(STORAGE_KEY, data.sessionId);
         }
-        setMessages(data.messages ?? []);
+        setMessages((prev) => {
+          const history = data.messages ?? [];
+          if (prev.length === 0) return history;
+          const historyIds = new Set(history.map((msg) => msg.id));
+          const pending = prev.filter((msg) => !historyIds.has(msg.id));
+          return [...history, ...pending];
+        });
         setHistoryLoaded(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load history");
@@ -93,7 +100,7 @@ export default function ChatWidget() {
     bottomRef.current.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, isOpen]);
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -141,7 +148,29 @@ export default function ChatWidget() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOpen = () => {
+      setIsOpen(true);
+    };
+    const handleSend = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      if (!detail?.message) return;
+      setIsOpen(true);
+      void sendMessage(detail.message);
+    };
+
+    window.addEventListener(CHAT_OPEN_EVENT, handleOpen);
+    window.addEventListener(CHAT_SEND_EVENT, handleSend);
+
+    return () => {
+      window.removeEventListener(CHAT_OPEN_EVENT, handleOpen);
+      window.removeEventListener(CHAT_SEND_EVENT, handleSend);
+    };
+  }, [sendMessage]);
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
@@ -149,7 +178,12 @@ export default function ChatWidget() {
         <div className="mb-4 flex h-[600px] w-[400px] max-h-[80vh] max-w-[90vw] flex-col overflow-hidden rounded-3xl border border-slate-700/70 bg-slate-950/95 shadow-2xl shadow-black/40">
           <div className="flex items-center justify-between border-b border-slate-800/70 px-4 py-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">PropAI Chat</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">PropAI Assistant</p>
+                <span className="rounded-full border border-cyan-300/40 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200">
+                  ✨ AI
+                </span>
+              </div>
               <p className="text-sm text-slate-200">Ask about rent, expenses, or leases.</p>
             </div>
             <button
@@ -255,10 +289,13 @@ export default function ChatWidget() {
 
       <button
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500 text-xl shadow-lg shadow-cyan-500/30 transition hover:-translate-y-0.5"
+        className="group relative flex h-[60px] w-[60px] items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-cyan-500 to-sky-400 text-2xl shadow-xl shadow-indigo-500/40 transition hover:-translate-y-0.5"
         aria-label="Open chat"
+        title="AI Assistant"
       >
-        💬
+        <span className="absolute inset-0 rounded-full bg-cyan-400/40 opacity-60 blur-xl transition group-hover:opacity-90" />
+        <span className="absolute inset-0 rounded-full border border-cyan-200/40 opacity-60 animate-pulse" />
+        <span className="relative z-10">✨💬</span>
       </button>
     </div>
   );

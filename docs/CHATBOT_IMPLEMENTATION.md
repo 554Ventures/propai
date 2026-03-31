@@ -1,6 +1,6 @@
 # Chatbot Implementation Tracker
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
 
 ## Backend endpoints status
 - POST /api/chat: Done
@@ -15,6 +15,9 @@ Last updated: 2026-04-07
 - Citations/tool call display: Done
 - Session persistence (localStorage): Done
 - History load on open: Done
+- Dashboard AI chat hero section: Done
+- Navigation AI Assistant entry: Done
+- Enhanced AI-themed launcher styling + animation: Done
 
 ## Function calling tools status
 - getRentCollected: Done
@@ -31,6 +34,9 @@ Last updated: 2026-04-07
 - [ ] Quick action buttons work
 - [ ] Chat history persists across page refreshes
 - [ ] Multiple conversations don’t cross-contaminate
+- [ ] Dashboard Ask PropAI section opens full chat
+- [ ] Example chips open chat and send message
+- [ ] Navigation AI Assistant link opens chat
 
 ## Known issues / blockers
 - API build fails because vitest.config.ts is included outside tsconfig rootDir (pre-existing).
