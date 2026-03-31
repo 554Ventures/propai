@@ -12,6 +12,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", type: "link" as const },
   { href: "/properties", label: "Properties", type: "link" as const },
   { href: "/tenants", label: "Tenants", type: "link" as const },
+  { href: "/leases", label: "Leases", type: "link" as const },
   { href: "/expenses", label: "Expenses", type: "link" as const },
   { href: "/analytics", label: "Analytics", type: "link" as const },
   { href: "/documents", label: "Documents", type: "link" as const },

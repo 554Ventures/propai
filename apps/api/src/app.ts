@@ -13,6 +13,7 @@ import insightsRoutes from "./routes/insights";
 import dashboardRoutes from "./routes/dashboard";
 import documentRoutes from "./routes/documents";
 import chatRoutes from "./routes/chat";
+import leaseRoutes from "./routes/leases";
 import { requireAuth } from "./middleware/auth";
 import { errorHandler, notFound } from "./middleware/error";
 
@@ -30,6 +31,7 @@ app.use("/auth", authRoutes);
 app.use("/properties", requireAuth, propertyRoutes);
 app.use("/tenants", requireAuth, tenantRoutes);
 app.use("/", requireAuth, unitRoutes);
+app.use("/", requireAuth, leaseRoutes);
 app.use("/api/expenses", requireAuth, expenseRoutes);
 app.use("/api/analytics", requireAuth, analyticsRoutes);
 app.use("/api/insights", requireAuth, insightsRoutes);

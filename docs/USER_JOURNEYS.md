@@ -1,5 +1,7 @@
 # PropAI User Journeys (Properties, Units, Tenants, Leases)
 
+Status: Implemented ✅
+
 ## Current State (What Exists)
 
 ### Data Model (Backend)
@@ -176,4 +178,3 @@ Why:
 8. Backend Support Needed (for later implementation)
    - Leases CRUD endpoints (create/update/end/active lease lookup).
    - Unit occupancy endpoint or query to fetch unit + current lease + tenant in one call.
-

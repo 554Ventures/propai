@@ -16,12 +16,30 @@ router.get(
       return;
     }
 
+    const now = new Date();
     const units = await prisma.unit.findMany({
       where: { propertyId: property.id },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      include: {
+        leases: {
+          where: {
+            status: "ACTIVE",
+            OR: [{ endDate: null }, { endDate: { gt: now } }]
+          },
+          include: { tenant: true },
+          orderBy: { startDate: "desc" },
+          take: 1
+        }
+      }
     });
 
-    res.json(units);
+    res.json(
+      units.map((unit) => ({
+        ...unit,
+        currentLease: unit.leases[0] ?? null,
+        leases: undefined
+      }))
+    );
   })
 );
 
