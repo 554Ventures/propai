@@ -255,7 +255,7 @@ router.patch(
       }
     }
 
-    let nextStatus = body.status ?? lease.status;
+    const nextStatus = body.status ?? lease.status;
     let endDateToSave = nextEndDate;
     if (nextStatus === "ENDED" && !endDateToSave) {
       endDateToSave = new Date();

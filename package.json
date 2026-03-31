@@ -6,7 +6,24 @@
   "scripts": {
     "dev": "pnpm -r dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint",
-    "test": "pnpm -r test"
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "type-check": "pnpm --filter @propai/api run type-check",
+    "test": "pnpm -r test",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "apps/api/src/**/*.ts": [
+      "eslint --fix",
+      "bash -c 'cd apps/api && pnpm exec tsc --noEmit'"
+    ]
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
+    "eslint": "^8",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1"
   }
 }
