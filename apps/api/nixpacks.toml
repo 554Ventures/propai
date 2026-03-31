@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "pnpm"]
+
+[phases.install]
+cmds = ["pnpm install --filter @propai/api..."]
+
+[phases.build]
+cmds = ["pnpm --filter @propai/api build"]
+
+[start]
+cmd = "node dist/index.js"
