@@ -2,10 +2,13 @@ node_modules
 .pnpm-store
 .env
 .env.*
+!.env.example
 .next
 out
 dist
+build
 coverage
+uploads
 *.log
 *.tsbuildinfo
 .DS_Store
