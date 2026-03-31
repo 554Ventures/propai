@@ -53,6 +53,8 @@ model User {
   expenses     Expense[]
   documents    Document[]
   notifications Notification[]
+  aiInsights   AIInsight[]
+  chatSessions ChatSession[]
 }
 
 model Property {
@@ -76,6 +78,8 @@ model Property {
   maintenance  MaintenanceRequest[]
   expenses     Expense[]
   documents    Document[]
+  aiInsights   AIInsight[]
+  chatSessions ChatSession[]
 }
 
 model Unit {
@@ -197,6 +201,26 @@ model Expense {
   user      User     @relation(fields: [userId], references: [id])
   property  Property @relation(fields: [propertyId], references: [id])
   vendor    Vendor?  @relation(fields: [vendorId], references: [id])
+  aiInsights AIInsight[]
+}
+
+model AIInsight {
+  id            String   @id @default(cuid())
+  userId        String
+  propertyId    String?
+  expenseId     String?
+  type          String
+  input         Json
+  output        Json
+  confidence    Float?
+  reasoning     String?
+  overrideValue String?
+  overriddenAt  DateTime?
+  createdAt     DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  property  Property? @relation(fields: [propertyId], references: [id])
+  expense   Expense?  @relation(fields: [expenseId], references: [id])
 }
 
 model Document {
@@ -223,4 +247,40 @@ model Notification {
   createdAt DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id])
+}
+
+model ChatSession {
+  id         String   @id @default(cuid())
+  userId     String
+  propertyId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id])
+  property Property? @relation(fields: [propertyId], references: [id])
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  session   ChatSession @relation(fields: [sessionId], references: [id])
+  toolCalls ToolCallLog[]
+}
+
+model ToolCallLog {
+  id        String   @id @default(cuid())
+  messageId String
+  toolName  String
+  inputs    Json
+  outputs   Json?
+  status    String
+  createdAt DateTime @default(now())
+
+  message   ChatMessage @relation(fields: [messageId], references: [id])
 }
