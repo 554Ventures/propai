@@ -112,6 +112,45 @@ propai/
 - OpenAI content moderation
 - Row-level security (Prisma)
 
+## Code Quality
+
+PropAI uses automated tooling to maintain code quality and prevent TypeScript errors from reaching production:
+
+### Pre-Commit Hooks (Husky + lint-staged)
+
+Every commit automatically runs:
+- **ESLint** - Lints and auto-fixes TypeScript code
+- **Type checking** - Ensures no TypeScript errors with `strict: true`
+
+**Bypassing hooks** (use sparingly):
+```bash
+git commit --no-verify
+```
+
+### Manual Commands
+
+```bash
+# Run ESLint on all files
+pnpm lint
+
+# Auto-fix ESLint issues
+pnpm lint:fix
+
+# Type-check the API
+pnpm type-check
+
+# Build (full type check)
+pnpm build
+```
+
+### TypeScript Configuration
+
+- **Strict mode enabled** (`strict: true`)
+- All implicit `any` types must be explicitly typed
+- Custom Express types defined in `apps/api/src/global.d.ts`
+
+The pre-commit hooks ensure that only type-safe, linted code gets committed, preventing the TypeScript errors that previously blocked Railway deployment.
+
 ## License
 MIT (or your choice)
 
