@@ -2,17 +2,40 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { useAuth } from "./auth-provider";
+import ChatWidget from "./chat-widget";
 
 const navItems = [
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/properties", label: "Properties" },
-  { href: "/tenants", label: "Tenants" }
+  { href: "/tenants", label: "Tenants" },
+  { href: "/expenses", label: "Expenses" },
+  { href: "/analytics", label: "Analytics" },
+  { href: "/documents", label: "Documents" }
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const initials = useMemo(() => {
+    if (!user) return "U";
+    if (user.name) {
+      return user.name
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase();
+    }
+    return user.email.slice(0, 2).toUpperCase();
+  }, [user]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -29,14 +52,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex items-center gap-3">
             {user ? (
-              <div className="text-right">
-                <p className="text-sm text-slate-200">{user.name ?? user.email}</p>
+              <div className="relative">
                 <button
-                  className="text-xs text-slate-400 hover:text-slate-200"
-                  onClick={logout}
+                  className="flex items-center gap-3 rounded-full border border-slate-700/60 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200 transition hover:border-cyan-400/70"
+                  onClick={() => setMenuOpen((prev) => !prev)}
                 >
-                  Sign out
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-400/20 text-xs font-semibold text-cyan-200">
+                    {initials}
+                  </span>
+                  <span className="hidden text-left md:block">
+                    <span className="block text-xs text-slate-400">Signed in as</span>
+                    <span className="block text-sm">{user.name ?? user.email}</span>
+                  </span>
                 </button>
+                {menuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 rounded-2xl border border-slate-700/70 bg-slate-950/90 p-2 text-sm shadow-xl">
+                    <div className="px-3 py-2 text-xs text-slate-400">Account</div>
+                    <div className="px-3 pb-2 text-sm text-slate-200">{user.email}</div>
+                    <button
+                      className="w-full rounded-xl px-3 py-2 text-left text-sm text-rose-200 transition hover:bg-rose-500/10"
+                      onClick={logout}
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <Button asChild variant="secondary">
@@ -48,7 +88,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="mt-8 flex flex-wrap gap-3">
           {navItems.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
                 key={item.href}
@@ -68,6 +108,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <main className="mt-10 flex-1 rounded-3xl border border-slate-800/70 bg-slate-900/40 p-6 shadow-2xl shadow-black/40">
           {children}
         </main>
+        {user && <ChatWidget />}
       </div>
     </div>
   );

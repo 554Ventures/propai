@@ -7,14 +7,14 @@ Last updated: 2026-04-07
 - GET /api/chat/history: Done
 
 ## Frontend widget status
-- Floating launcher button: Not started
-- Chat panel UI + message list: Not started
-- Input + send flow: Not started
-- Quick actions: Not started
-- Typing indicator + loading states: Not started
-- Citations/tool call display: Not started
-- Session persistence (localStorage): Not started
-- History load on open: Not started
+- Floating launcher button: Done
+- Chat panel UI + message list: Done
+- Input + send flow: Done
+- Quick actions: Done
+- Typing indicator + loading states: Done
+- Citations/tool call display: Done
+- Session persistence (localStorage): Done
+- History load on open: Done
 
 ## Function calling tools status
 - getRentCollected: Done
@@ -34,3 +34,4 @@ Last updated: 2026-04-07
 
 ## Known issues / blockers
 - API build fails because vitest.config.ts is included outside tsconfig rootDir (pre-existing).
+- Web lint fails due to eslint config import error (eslint package exports).
