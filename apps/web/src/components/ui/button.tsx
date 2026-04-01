@@ -1,6 +1,7 @@
 "use client"
 
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
+import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
@@ -47,13 +48,19 @@ function Button({
   variant = "default",
   size = "default",
   type = "submit",
+  asChild = false,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean
+  }) {
+  const Component = asChild ? Slot : ButtonPrimitive
+
   return (
-    <ButtonPrimitive
+    <Component
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
-      type={type}
+      {...(!asChild ? { type } : {})}
       {...props}
     />
   )

@@ -16,6 +16,10 @@
     "apps/api/src/**/*.ts": [
       "eslint --fix",
       "bash -c 'cd apps/api && pnpm exec tsc --noEmit'"
+    ],
+    "apps/web/**/*.{ts,tsx}": [
+      "bash -c 'cd apps/web && pnpm exec eslint --fix .'",
+      "bash -c 'cd apps/web && pnpm exec tsc --noEmit'"
     ]
   },
   "devDependencies": {
