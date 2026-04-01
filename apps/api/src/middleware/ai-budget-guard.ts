@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import prisma from "../lib/prisma";
-import { logAiSecurityEvent } from "../security/security-logger";
+import prisma from "../lib/prisma.js";
+import { logAiSecurityEvent } from "../security/security-logger.js";
 
 const parseLimit = (value: string | undefined) => {
   if (!value) return 0;

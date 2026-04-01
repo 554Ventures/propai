@@ -1,8 +1,8 @@
 import { Router } from "express";
-import prisma from "../lib/prisma";
-import { asyncHandler } from "../utils/async-handler";
-import { aiRateLimit } from "../middleware/ai-rate-limit";
-import { categorizeExpense, expenseCategories } from "../lib/ai/expense-categorizer";
+import prisma from "../lib/prisma.js";
+import { asyncHandler } from "../utils/async-handler.js";
+import { aiRateLimit } from "../middleware/ai-rate-limit.js";
+import { categorizeExpense, expenseCategories } from "../lib/ai/expense-categorizer.js";
 
 const router: Router = Router();
 

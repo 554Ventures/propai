@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { logAiSecurityEvent } from "../security/security-logger";
+import { logAiSecurityEvent } from "../security/security-logger.js";
 
 type Bucket = { count: number; resetAt: number };
 

@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import { detectPromptInjection } from "../security/prompt-injection";
-import { logAiSecurityEvent } from "../security/security-logger";
+import { detectPromptInjection } from "../security/prompt-injection.js";
+import { logAiSecurityEvent } from "../security/security-logger.js";
 
 export const aiPromptGuard = (req: Request, res: Response, next: NextFunction) => {
   const message = req.ai?.sanitizedMessage ?? req.body?.message ?? "";
