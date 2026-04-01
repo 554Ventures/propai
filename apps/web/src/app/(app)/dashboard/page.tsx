@@ -210,7 +210,7 @@ export default function DashboardPage() {
                 <Link href="/tenants/new">Add tenant</Link>
               </Button>
               <Button asChild variant="secondary" className="justify-start">
-                <Link href="/expenses">Log an expense</Link>
+                <Link href="/cashflow">Log an expense</Link>
               </Button>
               <Button asChild variant="secondary" className="justify-start">
                 <Link href="/documents">Upload document</Link>

@@ -9,17 +9,27 @@ const testUser = {
 };
 
 beforeAll(async () => {
-  await prisma.user.deleteMany({ where: { email: testUser.email } });
+  const existing = await prisma.user.findUnique({ where: { email: testUser.email } });
+  if (existing) {
+    await prisma.membership.deleteMany({ where: { userId: existing.id } });
+    await prisma.user.deleteMany({ where: { id: existing.id } });
+    await prisma.organization.deleteMany({ where: { id: existing.defaultOrgId } });
+  }
 });
 
 afterAll(async () => {
-  await prisma.user.deleteMany({ where: { email: testUser.email } });
+  const existing = await prisma.user.findUnique({ where: { email: testUser.email } });
+  if (existing) {
+    await prisma.membership.deleteMany({ where: { userId: existing.id } });
+    await prisma.user.deleteMany({ where: { id: existing.id } });
+    await prisma.organization.deleteMany({ where: { id: existing.defaultOrgId } });
+  }
   await prisma.$disconnect();
 });
 
 describe("auth", () => {
   it("signs up a new user", async () => {
-    const res = await request(app).post("/auth/signup").send(testUser);
+    const res = await request(app).post("/auth/signup").send({ ...testUser, organizationName: "Test Org" });
     expect(res.status).toBe(201);
     expect(res.body.token).toBeTruthy();
     expect(res.body.user.email).toBe(testUser.email);

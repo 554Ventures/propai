@@ -7,17 +7,17 @@ import { Button } from "../components/ui/button";
 import { useAuth } from "../components/auth-provider";
 
 export default function HomePage() {
-  const { user, loading } = useAuth();
+  const { token, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return; // Wait for auth to load
-    if (user) {
+    if (token) {
       router.push('/dashboard');
     }
-  }, [user, loading, router]);
+  }, [token, loading, router]);
 
-  if (loading || user) {
+  if (loading || token) {
     return null; // Prevent flash while loading or redirecting
   }
 

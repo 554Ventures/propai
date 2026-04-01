@@ -46,6 +46,11 @@ type UnitWithLease = {
   currentLease?: Lease | null;
 };
 
+const friendlyError = (err: unknown, fallback: string) => {
+  if (err instanceof Error) return err.message;
+  return fallback;
+};
+
 const formatDate = (value?: string | null) => {
   if (!value) return "—";
   const date = new Date(value);
@@ -182,9 +187,25 @@ export default function PropertyDetailPage() {
       await apiFetch(`/properties/${propertyId}`, { method: "DELETE", auth: true });
       router.push("/properties");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete property");
+      setError(friendlyError(err, "Failed to delete property"));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deactivateUnit = async (unitId: string) => {
+    if (!confirm("Deactivate this unit?")) return;
+    setUnitsError(null);
+    try {
+      await apiFetch(`/units/${unitId}/deactivate`, { method: "PATCH", auth: true });
+      await loadUnits();
+    } catch (err: any) {
+      const code = err?.code as string | undefined;
+      if (code === "UNIT_HAS_ACTIVE_LEASE") {
+        setUnitsError("This unit has an active lease. End the lease first before deactivating.");
+        return;
+      }
+      setUnitsError(friendlyError(err, "Failed to deactivate unit"));
     }
   };
 
@@ -478,6 +499,14 @@ export default function PropertyDetailPage() {
                   ) : (
                     <Button onClick={() => openLeaseFlow(unit)}>Add Tenant</Button>
                   )}
+
+                  <Button
+                    variant="secondary"
+                    onClick={() => void deactivateUnit(unit.id)}
+                    disabled={unitsLoading || unitSaving}
+                  >
+                    Deactivate
+                  </Button>
                 </div>
               </div>
             );

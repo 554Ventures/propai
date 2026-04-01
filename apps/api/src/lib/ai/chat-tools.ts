@@ -86,10 +86,10 @@ export const resolveDateRange = (input?: DateRangeInput): ResolvedDateRange => {
   };
 };
 
-const ensurePropertyAccess = async (userId: string, propertyId?: string | null) => {
+const ensurePropertyAccess = async (organizationId: string, propertyId?: string | null) => {
   if (!propertyId) return null;
   const property = await prisma.property.findFirst({
-    where: { id: propertyId, userId }
+    where: { id: propertyId, organizationId }
   });
   if (!property) {
     throw new Error("Property not found or access denied");
@@ -97,14 +97,14 @@ const ensurePropertyAccess = async (userId: string, propertyId?: string | null) 
   return property;
 };
 
-const resolveProperty = async (userId: string, propertyId?: string, propertyName?: string) => {
+const resolveProperty = async (organizationId: string, propertyId?: string, propertyName?: string) => {
   if (propertyId) {
-    return ensurePropertyAccess(userId, propertyId);
+    return ensurePropertyAccess(organizationId, propertyId);
   }
   if (propertyName) {
     const property = await prisma.property.findFirst({
       where: {
-        userId,
+        organizationId,
         name: { contains: propertyName, mode: "insensitive" }
       }
     });
@@ -248,6 +248,7 @@ export const chatToolDefinitions = [
 
 export type ToolExecutionContext = {
   userId: string;
+  organizationId: string;
 };
 
 export type ToolExecutionResult = {
@@ -261,11 +262,12 @@ export const executeChatTool = async (
   context: ToolExecutionContext
 ): Promise<ToolExecutionResult> => {
   const userId = context.userId;
+  const organizationId = context.organizationId;
 
   switch (toolName) {
     case "listProperties": {
       const properties = await prisma.property.findMany({
-        where: { userId },
+        where: { organizationId },
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
@@ -284,14 +286,14 @@ export const executeChatTool = async (
     case "getRentCollected": {
       const range = resolveDateRange(args.range as DateRangeInput | undefined);
       const property = await resolveProperty(
-        userId,
+        organizationId,
         args.propertyId as string | undefined,
         args.propertyName as string | undefined
       );
 
       const payments = await prisma.payment.findMany({
         where: {
-          userId,
+          organizationId,
           status: "PAID",
           paidDate: { gte: range.start, lte: range.end },
           ...propertyFilters(property?.id)
@@ -324,14 +326,14 @@ export const executeChatTool = async (
     }
     case "getOutstandingRent": {
       const property = await resolveProperty(
-        userId,
+        organizationId,
         args.propertyId as string | undefined,
         args.propertyName as string | undefined
       );
       const now = new Date();
       const payments = await prisma.payment.findMany({
         where: {
-          userId,
+          organizationId,
           status: { in: ["PENDING", "LATE"] },
           dueDate: { lte: now },
           ...propertyFilters(property?.id)
@@ -365,14 +367,14 @@ export const executeChatTool = async (
     case "getPropertyExpenses": {
       const range = resolveDateRange(args.range as DateRangeInput | undefined);
       const property = await resolveProperty(
-        userId,
+        organizationId,
         args.propertyId as string | undefined,
         args.propertyName as string | undefined
       );
 
       const expenses = await prisma.expense.findMany({
         where: {
-          userId,
+          organizationId,
           date: { gte: range.start, lte: range.end },
           ...propertyFilters(property?.id)
         },
@@ -415,14 +417,14 @@ export const executeChatTool = async (
     case "getLeaseEnding": {
       const range = resolveDateRange(args.range as DateRangeInput | undefined);
       const property = await resolveProperty(
-        userId,
+        organizationId,
         args.propertyId as string | undefined,
         args.propertyName as string | undefined
       );
 
       const leases = await prisma.lease.findMany({
         where: {
-          userId,
+          organizationId,
           endDate: { gte: range.start, lte: range.end },
           ...propertyFilters(property?.id)
         },
@@ -456,14 +458,14 @@ export const executeChatTool = async (
       }
 
       const property = await resolveProperty(
-        userId,
+        organizationId,
         args.propertyId as string | undefined,
         args.propertyName as string | undefined
       );
 
       const documents = await prisma.document.findMany({
         where: {
-          userId,
+          organizationId,
           name: { contains: query, mode: "insensitive" },
           ...propertyFilters(property?.id)
         },

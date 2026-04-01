@@ -34,22 +34,26 @@ const cleanupUserData = async () => {
   }
 
   const userId = user.id;
-  await prisma.aIInsight.deleteMany({ where: { userId } });
-  await prisma.expense.deleteMany({ where: { userId } });
-  await prisma.payment.deleteMany({ where: { userId } });
-  await prisma.document.deleteMany({ where: { userId } });
-  await prisma.maintenanceRequest.deleteMany({ where: { userId } });
-  await prisma.lease.deleteMany({ where: { userId } });
-  await prisma.unit.deleteMany({ where: { userId } });
-  await prisma.tenant.deleteMany({ where: { userId } });
-  await prisma.vendor.deleteMany({ where: { userId } });
-  await prisma.property.deleteMany({ where: { userId } });
+  const organizationId = user.defaultOrgId;
+
+  await prisma.aIInsight.deleteMany({ where: { organizationId } });
+  await prisma.expense.deleteMany({ where: { organizationId } });
+  await prisma.payment.deleteMany({ where: { organizationId } });
+  await prisma.document.deleteMany({ where: { organizationId } });
+  await prisma.maintenanceRequest.deleteMany({ where: { organizationId } });
+  await prisma.lease.deleteMany({ where: { organizationId } });
+  await prisma.unit.deleteMany({ where: { organizationId } });
+  await prisma.tenant.deleteMany({ where: { organizationId } });
+  await prisma.vendor.deleteMany({ where: { organizationId } });
+  await prisma.property.deleteMany({ where: { organizationId } });
+  await prisma.membership.deleteMany({ where: { userId } });
   await prisma.user.deleteMany({ where: { id: userId } });
+  await prisma.organization.deleteMany({ where: { id: organizationId } });
 };
 
 const createUserAndToken = async () => {
   await cleanupUserData();
-  await request(app).post("/auth/signup").send(testUser);
+  await request(app).post("/auth/signup").send({ ...testUser, organizationName: "Test Org" });
   const login = await request(app).post("/auth/login").send({
     email: testUser.email,
     password: testUser.password

@@ -15,7 +15,12 @@ const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(
 
 export const aiBudgetGuard = async (req: Request, res: Response, next: NextFunction) => {
   const userId = req.user?.id;
+  const organizationId = req.auth?.organizationId;
   if (!userId) {
+    next();
+    return;
+  }
+  if (!organizationId) {
     next();
     return;
   }
@@ -23,7 +28,7 @@ export const aiBudgetGuard = async (req: Request, res: Response, next: NextFunct
   const now = new Date();
   const monthStart = startOfMonth(now);
 
-  const budget = await prisma.aiBudget.findUnique({ where: { userId } });
+  const budget = await prisma.aiBudget.findFirst({ where: { userId, organizationId } });
   const limit = budget?.monthlyLimitUsd ?? defaultMonthlyLimitUsd;
 
   if (!limit || limit <= 0) {
@@ -33,7 +38,7 @@ export const aiBudgetGuard = async (req: Request, res: Response, next: NextFunct
 
   const usage = await prisma.aiUsage.aggregate({
     where: {
-      userId,
+      organizationId,
       createdAt: { gte: monthStart, lte: now }
     },
     _sum: { costUsd: true }
@@ -44,6 +49,7 @@ export const aiBudgetGuard = async (req: Request, res: Response, next: NextFunct
   if (spent >= limit) {
     await logAiSecurityEvent({
       userId,
+      organizationId,
       type: "budget_exceeded",
       severity: "high",
       message: "AI budget exceeded",
@@ -56,6 +62,7 @@ export const aiBudgetGuard = async (req: Request, res: Response, next: NextFunct
   if (warnThreshold > 0 && spent >= limit * warnThreshold) {
     await logAiSecurityEvent({
       userId,
+      organizationId,
       type: "budget_near_limit",
       severity: "medium",
       message: "AI budget nearing limit",

@@ -6,7 +6,7 @@ import { useAuth } from '../../components/auth-provider';
 import AppShell from "../../components/app-shell";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { token, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -14,11 +14,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     // Wait for auth to load before checking
     if (loading) return;
     
-    if (!user) {
+    // Guard all (app) routes behind a valid JWT token.
+    if (!token) {
       const returnUrl = encodeURIComponent(pathname);
       router.push(`/login?returnUrl=${returnUrl}`);
     }
-  }, [user, loading, router, pathname]);
+  }, [token, loading, router, pathname]);
 
   // Show nothing while loading auth
   if (loading) {
@@ -26,7 +27,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   // Show nothing if not authenticated (will redirect)
-  if (!user) {
+  if (!token) {
     return null;
   }
 

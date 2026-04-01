@@ -1,5 +1,24 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+/**
+ * Legacy route.
+ *
+ * We moved Expenses under Cashflow (income + expenses) to support analytics, prediction, and taxes.
+ */
+export default function ExpensesPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/cashflow");
+  }, [router]);
+
+  return null;
+}
+
+/*
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -338,3 +357,5 @@ export default function ExpensesPage() {
     </div>
   );
 }
+
+*/

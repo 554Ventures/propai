@@ -64,7 +64,7 @@ router.get(
     const [payments, expenses] = await Promise.all([
       prisma.payment.findMany({
         where: {
-          userId: req.user?.id,
+          organizationId: req.auth?.organizationId,
           propertyId,
           OR: [
             { paidDate: { gte: new Date(0) } },
@@ -74,7 +74,7 @@ router.get(
       }),
       prisma.expense.findMany({
         where: {
-          userId: req.user?.id,
+          organizationId: req.auth?.organizationId,
           propertyId,
           date: { gte: startMonth }
         }
@@ -137,7 +137,8 @@ router.get(
 
     await prisma.aIInsight.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         propertyId,
         type: "CASH_FLOW_FORECAST",
         input: { timeRange },

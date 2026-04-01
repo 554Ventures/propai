@@ -14,6 +14,8 @@ import dashboardRoutes from "./routes/dashboard.js";
 import documentRoutes from "./routes/documents.js";
 import chatRoutes from "./routes/chat.js";
 import leaseRoutes from "./routes/leases.js";
+import orgInviteRoutes from "./routes/org-invites.js";
+import cashflowRoutes from "./routes/cashflow.js";
 import { requireAuth } from "./middleware/auth.js";
 import { errorHandler, notFound } from "./middleware/error.js";
 
@@ -28,11 +30,13 @@ app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 app.use("/health", healthRoutes);
 app.use("/auth", authRoutes);
+app.use("/org/invites", orgInviteRoutes);
 app.use("/properties", requireAuth, propertyRoutes);
 app.use("/tenants", requireAuth, tenantRoutes);
 app.use("/", requireAuth, unitRoutes);
 app.use("/", requireAuth, leaseRoutes);
 app.use("/api/expenses", requireAuth, expenseRoutes);
+app.use("/cashflow", requireAuth, cashflowRoutes);
 app.use("/api/analytics", requireAuth, analyticsRoutes);
 app.use("/api/insights", requireAuth, insightsRoutes);
 app.use("/api/dashboard", requireAuth, dashboardRoutes);

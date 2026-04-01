@@ -13,6 +13,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +29,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         const returnUrl = searchParams.get('returnUrl') || '/dashboard';
         router.push(returnUrl);
       } else {
-        await signup(name, email, password);
+        await signup({ name, email, password, organizationName });
         router.push("/dashboard");
       }
     } catch (err) {
@@ -58,6 +59,18 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Avery Johnson"
+              required
+            />
+          </div>
+        )}
+        {mode === "signup" && (
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">Organization Name</label>
+            <input
+              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+              value={organizationName}
+              onChange={(event) => setOrganizationName(event.target.value)}
+              placeholder="554 Ventures"
               required
             />
           </div>

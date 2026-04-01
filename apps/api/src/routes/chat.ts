@@ -62,12 +62,13 @@ router.post(
     }
 
     const userId = req.user?.id ?? "";
+    const organizationId = req.auth?.organizationId ?? "";
     const client = getOpenAIClient();
     const model = getOpenAIModel();
 
     if (propertyId) {
       const property = await prisma.property.findFirst({
-        where: { id: propertyId, userId },
+        where: { id: propertyId, organizationId },
         select: { id: true, name: true }
       });
       if (!property) {
@@ -79,7 +80,7 @@ router.post(
     let session = null;
     if (sessionId) {
       session = await prisma.chatSession.findFirst({
-        where: { id: sessionId, userId },
+        where: { id: sessionId, organizationId },
         include: { property: true }
       });
       // If session not found (stale ID), create a new one instead of erroring
@@ -87,6 +88,7 @@ router.post(
         session = await prisma.chatSession.create({
           data: {
             userId,
+            organizationId,
             propertyId: propertyId ?? null
           },
           include: { property: true }
@@ -96,6 +98,7 @@ router.post(
       session = await prisma.chatSession.create({
         data: {
           userId,
+          organizationId,
           propertyId: propertyId ?? null
         },
         include: { property: true }
@@ -181,7 +184,10 @@ router.post(
         }
 
         try {
-          const result = await executeChatTool(toolCall.name, parsedArgs, { userId });
+          const result = await executeChatTool(toolCall.name, parsedArgs, {
+            userId,
+            organizationId
+          });
           toolCallLogs.push({
             toolName: toolCall.name,
             inputs: parsedArgs,
@@ -305,6 +311,7 @@ router.post(
     await prisma.aiUsage.create({
       data: {
         userId,
+        organizationId,
         sessionId: session.id,
         messageId: assistantMessage.id,
         model,
@@ -334,11 +341,11 @@ router.get(
     let session = null;
     if (sessionId) {
       session = await prisma.chatSession.findFirst({
-        where: { id: sessionId, userId }
+        where: { id: sessionId, organizationId: req.auth?.organizationId }
       });
     } else {
       session = await prisma.chatSession.findFirst({
-        where: { userId },
+        where: { organizationId: req.auth?.organizationId },
         orderBy: { updatedAt: "desc" }
       });
     }

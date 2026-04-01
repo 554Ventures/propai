@@ -2,6 +2,7 @@ import prisma from "../lib/prisma.js";
 
 export type SecurityEventInput = {
   userId?: string | null;
+  organizationId?: string | null;
   sessionId?: string | null;
   type: string;
   severity: "low" | "medium" | "high";
@@ -14,6 +15,7 @@ export const logAiSecurityEvent = async (event: SecurityEventInput) => {
     await prisma.aiSecurityEvent.create({
       data: {
         userId: event.userId ?? null,
+        organizationId: event.organizationId ?? null,
         sessionId: event.sessionId ?? null,
         type: event.type,
         severity: event.severity,

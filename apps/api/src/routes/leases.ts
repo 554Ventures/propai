@@ -1,6 +1,7 @@
 import { Router } from "express";
 import prisma from "../lib/prisma.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { sendError } from "../utils/api-error.js";
 
 const router: Router = Router();
 
@@ -33,75 +34,81 @@ router.post(
     };
 
     if (!tenantId || !startDate || rent === undefined) {
-      res.status(400).json({ error: "Missing required lease fields" });
+      sendError(res, 400, "VALIDATION_ERROR", "Missing required lease fields");
       return;
     }
 
     const parsedStart = parseDate(startDate);
     const parsedEnd = endDate ? parseDate(endDate) : undefined;
     if (!parsedStart) {
-      res.status(400).json({ error: "Invalid start date" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid start date");
       return;
     }
     if (parsedEnd === null) {
-      res.status(400).json({ error: "Invalid end date" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid end date");
       return;
     }
     if (parsedEnd && parsedStart >= parsedEnd) {
-      res.status(400).json({ error: "Start date must be before end date" });
+      sendError(res, 400, "VALIDATION_ERROR", "Start date must be before end date");
       return;
     }
 
     const property = await prisma.property.findFirst({
-      where: { id: req.params.propertyId, userId: req.user?.id }
+      where: { id: req.params.propertyId, organizationId: req.auth?.organizationId }
     });
 
     if (!property) {
-      res.status(404).json({ error: "Property not found" });
+      sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
       return;
     }
 
     const unit = await prisma.unit.findFirst({
-      where: { id: req.params.unitId, propertyId: property.id, userId: req.user?.id }
+      where: {
+        id: req.params.unitId,
+        propertyId: property.id,
+        organizationId: req.auth?.organizationId,
+        archivedAt: null
+      }
     });
 
     if (!unit) {
-      res.status(404).json({ error: "Unit not found for property" });
+      sendError(res, 404, "UNIT_NOT_FOUND", "Unit not found for property");
       return;
     }
 
     const tenant = await prisma.tenant.findFirst({
-      where: { id: tenantId, userId: req.user?.id }
+      where: { id: tenantId, organizationId: req.auth?.organizationId }
     });
 
     if (!tenant) {
-      res.status(404).json({ error: "Tenant not found" });
+      sendError(res, 404, "TENANT_NOT_FOUND", "Tenant not found");
       return;
     }
 
     const activeLease = await prisma.lease.findFirst({
-      where: activeLeaseWhere(unit.id)
+      where: { ...activeLeaseWhere(unit.id), organizationId: req.auth?.organizationId }
     });
 
     if (activeLease) {
-      res.status(400).json({ error: "Unit already has an active lease" });
+      sendError(res, 400, "UNIT_HAS_ACTIVE_LEASE", "Unit already has an active lease");
       return;
     }
 
     const parsedRent = Number(rent);
     if (!Number.isFinite(parsedRent)) {
-      res.status(400).json({ error: "Invalid rent amount" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid rent amount");
       return;
     }
 
     if (status && !["DRAFT", "ACTIVE", "ENDED"].includes(status)) {
-      res.status(400).json({ error: "Invalid lease status" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid lease status");
       return;
     }
 
     const created = await prisma.lease.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         propertyId: property.id,
         unitId: unit.id,
         tenantId: tenant.id,
@@ -132,7 +139,7 @@ router.get(
 
     const leases = await prisma.lease.findMany({
       where: {
-        userId: req.user?.id,
+        organizationId: req.auth?.organizationId,
         propertyId: propertyId || undefined,
         status: status || undefined,
         tenantId: tenantId || undefined
@@ -153,7 +160,7 @@ router.get(
   "/leases/:id",
   asyncHandler(async (req, res) => {
     const lease = await prisma.lease.findFirst({
-      where: { id: req.params.id, userId: req.user?.id },
+      where: { id: req.params.id, organizationId: req.auth?.organizationId },
       include: {
         property: true,
         unit: true,
@@ -162,7 +169,7 @@ router.get(
     });
 
     if (!lease) {
-      res.status(404).json({ error: "Lease not found" });
+      sendError(res, 404, "LEASE_NOT_FOUND", "Lease not found");
       return;
     }
 
@@ -174,11 +181,11 @@ router.patch(
   "/leases/:id",
   asyncHandler(async (req, res) => {
     const lease = await prisma.lease.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!lease) {
-      res.status(404).json({ error: "Lease not found" });
+      sendError(res, 404, "LEASE_NOT_FOUND", "Lease not found");
       return;
     }
 
@@ -195,7 +202,7 @@ router.patch(
     const parsedStart =
       "startDate" in body && body.startDate ? parseDate(body.startDate) : undefined;
     if ("startDate" in body && body.startDate && !parsedStart) {
-      res.status(400).json({ error: "Invalid start date" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid start date");
       return;
     }
     let parsedEnd: Date | null | undefined;
@@ -205,7 +212,7 @@ router.patch(
       } else if (body.endDate) {
         parsedEnd = parseDate(body.endDate);
         if (parsedEnd === null) {
-          res.status(400).json({ error: "Invalid end date" });
+          sendError(res, 400, "VALIDATION_ERROR", "Invalid end date");
           return;
         }
       }
@@ -214,7 +221,7 @@ router.patch(
     const nextStartDate = parsedStart ?? lease.startDate;
     const nextEndDate = parsedEnd === undefined ? lease.endDate : parsedEnd;
     if (nextEndDate && nextStartDate >= nextEndDate) {
-      res.status(400).json({ error: "Start date must be before end date" });
+      sendError(res, 400, "VALIDATION_ERROR", "Start date must be before end date");
       return;
     }
 
@@ -224,20 +231,25 @@ router.patch(
 
     if (body.propertyId || body.unitId) {
       const unit = await prisma.unit.findFirst({
-        where: { id: nextUnitId, propertyId: nextPropertyId, userId: req.user?.id }
+        where: {
+          id: nextUnitId,
+          propertyId: nextPropertyId,
+          organizationId: req.auth?.organizationId,
+          archivedAt: null
+        }
       });
       if (!unit) {
-        res.status(400).json({ error: "Unit does not belong to property" });
+        sendError(res, 400, "VALIDATION_ERROR", "Unit does not belong to property");
         return;
       }
     }
 
     if (body.tenantId) {
       const tenant = await prisma.tenant.findFirst({
-        where: { id: nextTenantId, userId: req.user?.id }
+        where: { id: nextTenantId, organizationId: req.auth?.organizationId }
       });
       if (!tenant) {
-        res.status(404).json({ error: "Tenant not found" });
+        sendError(res, 404, "TENANT_NOT_FOUND", "Tenant not found");
         return;
       }
     }
@@ -246,11 +258,12 @@ router.patch(
       const activeLease = await prisma.lease.findFirst({
         where: {
           ...activeLeaseWhere(nextUnitId),
+          organizationId: req.auth?.organizationId,
           NOT: { id: lease.id }
         }
       });
       if (activeLease) {
-        res.status(400).json({ error: "Unit already has an active lease" });
+        sendError(res, 400, "UNIT_HAS_ACTIVE_LEASE", "Unit already has an active lease");
         return;
       }
     }
@@ -265,7 +278,7 @@ router.patch(
       body.rent !== undefined ? Number(body.rent) : lease.rent;
 
     if (!Number.isFinite(parsedRent)) {
-      res.status(400).json({ error: "Invalid rent amount" });
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid rent amount");
       return;
     }
 
@@ -295,11 +308,11 @@ router.delete(
   "/leases/:id",
   asyncHandler(async (req, res) => {
     const lease = await prisma.lease.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!lease) {
-      res.status(404).json({ error: "Lease not found" });
+      sendError(res, 404, "LEASE_NOT_FOUND", "Lease not found");
       return;
     }
 

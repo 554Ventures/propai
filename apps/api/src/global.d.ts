@@ -7,6 +7,25 @@ declare global {
         id: string;
         email: string;
       };
+      auth?: {
+        userId: string;
+        email: string;
+        organizationId: string;
+        membershipId: string;
+        role: "OWNER" | "ADMIN" | "MEMBER";
+      };
+
+      /**
+       * Org-first auth context.
+       * For now: one org per user (no org switching).
+       */
+      auth?: {
+        userId: string;
+        email: string;
+        organizationId: string;
+        membershipId: string;
+        role: "OWNER" | "ADMIN" | "MEMBER";
+      };
       ai?: {
         originalMessage?: string;
         sanitizedMessage?: string;

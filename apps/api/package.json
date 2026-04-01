@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "lint": "echo 'api lint not initialized'",
     "type-check": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "prisma migrate reset --force --skip-seed && prisma generate && vitest run",
     "prisma": "prisma",
     "migrate": "prisma migrate dev",
     "generate": "prisma generate"

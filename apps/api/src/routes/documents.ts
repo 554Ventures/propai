@@ -54,7 +54,8 @@ router.post(
 
     const document = await prisma.document.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         propertyId: propertyId || undefined,
         leaseId: leaseId || undefined,
         type: resolveDocType(type),
@@ -73,7 +74,8 @@ router.post(
     if (extractedText) {
       const insight = await prisma.aIInsight.create({
         data: {
-          userId: req.user?.id ?? "",
+          userId: req.auth?.userId ?? "",
+          organizationId: req.auth?.organizationId ?? "",
           propertyId: propertyId || undefined,
           type: "DOCUMENT_OCR",
           input: { documentId: document.id, name: document.name },
@@ -104,7 +106,7 @@ router.get(
 
     const documents = await prisma.document.findMany({
       where: {
-        userId: req.user?.id,
+        organizationId: req.auth?.organizationId,
         ...(propertyId ? { propertyId } : {})
       },
       orderBy: { createdAt: "desc" }

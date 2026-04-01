@@ -7,13 +7,13 @@ const router: Router = Router();
 router.get(
   "/metrics",
   asyncHandler(async (req, res) => {
-    const userId = req.user?.id ?? "";
+    const organizationId = req.auth?.organizationId ?? "";
     const now = new Date();
 
     // Get unique occupied units (can't use distinct with count, so find all and get unique unitIds)
     const activeLeases = await prisma.lease.findMany({
       where: {
-        userId,
+        organizationId,
         status: "ACTIVE",
         startDate: { lte: now },
         OR: [{ endDate: null }, { endDate: { gte: now } }]
@@ -24,16 +24,16 @@ router.get(
 
     const [propertiesCount, unitsCount, tenantsCount, totalIncome, outstandingRent, maintenanceCosts] =
       await Promise.all([
-        prisma.property.count({ where: { userId } }),
-        prisma.unit.count({ where: { userId } }),
-        prisma.tenant.count({ where: { userId } }),
+        prisma.property.count({ where: { organizationId } }),
+        prisma.unit.count({ where: { organizationId, archivedAt: null } }),
+        prisma.tenant.count({ where: { organizationId } }),
         prisma.payment.aggregate({
-          where: { userId, status: "PAID" },
+          where: { organizationId, status: "PAID" },
           _sum: { amount: true }
         }),
         prisma.payment.aggregate({
           where: {
-            userId,
+            organizationId,
             OR: [
               { status: "LATE" },
               { status: "PENDING", dueDate: { lt: now } }
@@ -42,7 +42,7 @@ router.get(
           _sum: { amount: true }
         }),
         prisma.maintenanceRequest.aggregate({
-          where: { userId },
+          where: { organizationId },
           _sum: { cost: true }
         })
       ]);
@@ -67,14 +67,14 @@ router.get(
 router.get(
   "/alerts",
   asyncHandler(async (req, res) => {
-    const userId = req.user?.id ?? "";
+    const organizationId = req.auth?.organizationId ?? "";
     const now = new Date();
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const [latePayments, expiringLeases, pendingMaintenance] = await Promise.all([
       prisma.payment.findMany({
         where: {
-          userId,
+          organizationId,
           OR: [
             { status: "LATE" },
             { status: "PENDING", dueDate: { lt: now } }
@@ -94,7 +94,7 @@ router.get(
       }),
       prisma.lease.findMany({
         where: {
-          userId,
+          organizationId,
           status: "ACTIVE",
           endDate: { gte: now, lte: in30Days }
         },
@@ -108,7 +108,7 @@ router.get(
       }),
       prisma.maintenanceRequest.findMany({
         where: {
-          userId,
+          organizationId,
           status: { in: ["PENDING", "IN_PROGRESS"] }
         },
         include: {

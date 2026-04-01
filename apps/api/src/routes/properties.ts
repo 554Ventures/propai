@@ -1,6 +1,8 @@
 import { Router } from "express";
 import prisma from "../lib/prisma.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { sendError } from "../utils/api-error.js";
+import { Prisma } from "@prisma/client";
 
 const router: Router = Router();
 
@@ -8,7 +10,7 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const properties = await prisma.property.findMany({
-      where: { userId: req.user?.id },
+      where: { organizationId: req.auth?.organizationId },
       orderBy: { createdAt: "desc" }
     });
 
@@ -31,13 +33,14 @@ router.post(
     };
 
     if (!name || !addressLine1 || !city || !state || !postalCode) {
-      res.status(400).json({ error: "Missing required fields" });
+      sendError(res, 400, "VALIDATION_ERROR", "Missing required fields");
       return;
     }
 
     const property = await prisma.property.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         name,
         addressLine1,
         addressLine2,
@@ -57,11 +60,11 @@ router.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const property = await prisma.property.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!property) {
-      res.status(404).json({ error: "Property not found" });
+      sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
       return;
     }
 
@@ -73,11 +76,11 @@ router.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const property = await prisma.property.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!property) {
-      res.status(404).json({ error: "Property not found" });
+      sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
       return;
     }
 
@@ -94,16 +97,30 @@ router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     const property = await prisma.property.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!property) {
-      res.status(404).json({ error: "Property not found" });
+      sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
       return;
     }
 
-    await prisma.property.delete({ where: { id: property.id } });
-    res.status(204).send();
+    try {
+      await prisma.property.delete({ where: { id: property.id } });
+      res.status(204).send();
+    } catch (err: unknown) {
+      // FK constraint (e.g. existing units/leases/payments/etc)
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
+        sendError(
+          res,
+          409,
+          "PROPERTY_DELETE_CONFLICT",
+          "Cannot delete property while it has related records (e.g., units or leases)"
+        );
+        return;
+      }
+      throw err;
+    }
   })
 );
 

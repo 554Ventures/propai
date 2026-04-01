@@ -7,16 +7,16 @@ const router: Router = Router();
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const userId = req.user?.id ?? "";
+    const organizationId = req.auth?.organizationId ?? "";
 
     const [items, expenseInsights] = await Promise.all([
       prisma.aIInsight.findMany({
-        where: { userId },
+        where: { organizationId },
         orderBy: { createdAt: "desc" },
         take: 20
       }),
       prisma.aIInsight.findMany({
-        where: { userId, type: "EXPENSE_CATEGORY" },
+        where: { organizationId, type: "EXPENSE_CATEGORY" },
         orderBy: { createdAt: "desc" },
         take: 50
       })

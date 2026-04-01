@@ -8,7 +8,7 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const tenants = await prisma.tenant.findMany({
-      where: { userId: req.user?.id },
+      where: { organizationId: req.auth?.organizationId },
       orderBy: { createdAt: "desc" }
     });
 
@@ -33,7 +33,8 @@ router.post(
 
     const tenant = await prisma.tenant.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         firstName,
         lastName,
         email,
@@ -49,7 +50,7 @@ router.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const tenant = await prisma.tenant.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!tenant) {
@@ -65,7 +66,7 @@ router.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const tenant = await prisma.tenant.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!tenant) {
@@ -86,7 +87,7 @@ router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     const tenant = await prisma.tenant.findFirst({
-      where: { id: req.params.id, userId: req.user?.id }
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
     });
 
     if (!tenant) {

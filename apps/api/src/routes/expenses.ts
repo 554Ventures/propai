@@ -26,7 +26,8 @@ router.post(
 
     const insight = await prisma.aIInsight.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         propertyId,
         type: "EXPENSE_CATEGORY",
         input: { description, amount, vendor },
@@ -53,7 +54,7 @@ router.get(
 
     const expenses = await prisma.expense.findMany({
       where: {
-        userId: req.user?.id,
+        organizationId: req.auth?.organizationId,
         ...(propertyId ? { propertyId } : {})
       },
       orderBy: { date: "desc" },
@@ -102,7 +103,8 @@ router.post(
     if (!resolvedVendorId && vendorName) {
       const vendor = await prisma.vendor.create({
         data: {
-          userId: req.user?.id ?? "",
+          userId: req.auth?.userId ?? "",
+          organizationId: req.auth?.organizationId ?? "",
           name: vendorName
         }
       });
@@ -111,7 +113,8 @@ router.post(
 
     const expense = await prisma.expense.create({
       data: {
-        userId: req.user?.id ?? "",
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
         propertyId,
         vendorId: resolvedVendorId,
         amount,
@@ -123,7 +126,7 @@ router.post(
 
     if (aiInsightId) {
       const insight = await prisma.aIInsight.findFirst({
-        where: { id: aiInsightId, userId: req.user?.id }
+        where: { id: aiInsightId, organizationId: req.auth?.organizationId }
       });
 
       if (insight) {

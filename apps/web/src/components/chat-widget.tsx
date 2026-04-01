@@ -46,7 +46,7 @@ type ChatResponse = {
 const quickActions = [
   { label: "Rent Summary", message: "How much rent did I collect last month?" },
   { label: "Properties", message: "List my properties." },
-  { label: "Expenses", message: "Show me expenses for Oak Street last month." }
+  { label: "Cashflow", message: "Show me expenses for Oak Street last month." }
 ];
 
 const formatTime = (value: string) => {
