@@ -1,4 +1,4 @@
-import { getOpenAIClient } from "../lib/openai";
+import { getOpenAIClient } from "../lib/openai.js";
 
 export type ModerationResult = {
   flagged: boolean;

@@ -1,8 +1,8 @@
 import { Router } from "express";
 import path from "path";
 import fs from "fs";
-import prisma from "../lib/prisma";
-import { asyncHandler } from "../utils/async-handler";
+import prisma from "../lib/prisma.js";
+import { asyncHandler } from "../utils/async-handler.js";
 import multer from "multer";
 
 const router: Router = Router();

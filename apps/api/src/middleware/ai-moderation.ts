@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import { moderateText } from "../security/moderation";
-import { logAiSecurityEvent } from "../security/security-logger";
+import { moderateText } from "../security/moderation.js";
+import { logAiSecurityEvent } from "../security/security-logger.js";
 
 const moderationEnabled = process.env.AI_MODERATION_ENABLED !== "false";
 

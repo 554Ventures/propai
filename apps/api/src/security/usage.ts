@@ -1,4 +1,4 @@
-import type { UsageSnapshot } from "./costs";
+import type { UsageSnapshot } from "./costs.js";
 
 export const extractUsage = (response: unknown): UsageSnapshot => {
   const usage = (response as { usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number } })?.usage;

@@ -1,7 +1,7 @@
 import { Router } from "express";
-import prisma from "../lib/prisma";
-import { asyncHandler } from "../utils/async-handler";
-import { aiRateLimit } from "../middleware/ai-rate-limit";
+import prisma from "../lib/prisma.js";
+import { asyncHandler } from "../utils/async-handler.js";
+import { aiRateLimit } from "../middleware/ai-rate-limit.js";
 
 const router: Router = Router();
 

@@ -1,4 +1,4 @@
-import { getOpenAIClient, getOpenAIModel } from "../openai";
+import { getOpenAIClient, getOpenAIModel } from "../openai.js";
 
 const CATEGORIES = [
   "Mortgage",

@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import { sanitizeUserInput } from "../security/sanitize";
-import { logAiSecurityEvent } from "../security/security-logger";
+import { sanitizeUserInput } from "../security/sanitize.js";
+import { logAiSecurityEvent } from "../security/security-logger.js";
 
 const maxLength = Number(process.env.AI_MAX_MESSAGE_CHARS ?? 4000);
 

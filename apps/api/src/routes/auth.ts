@@ -1,8 +1,8 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import prisma from "../lib/prisma";
-import { asyncHandler } from "../utils/async-handler";
-import { requireAuth, signToken } from "../middleware/auth";
+import prisma from "../lib/prisma.js";
+import { asyncHandler } from "../utils/async-handler.js";
+import { requireAuth, signToken } from "../middleware/auth.js";
 
 const router: Router = Router();
 
