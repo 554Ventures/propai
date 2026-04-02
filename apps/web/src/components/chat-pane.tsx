@@ -173,10 +173,15 @@ export default function ChatPane() {
 
     try {
       if (isWriteIntent(trimmed)) {
+        // If we have an in-progress draft, treat the user's next message as a follow-up.
+        const lastDraft = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.metadata?.aiDraft)?.metadata?.aiDraft;
+
         const data = await apiFetch<AiPlanResponse | AiPlanAltResponse | AiPlanAltClarifyResponse>("/ai/plan", {
           method: "POST",
           auth: true,
-          body: JSON.stringify({ message: trimmed })
+          body: JSON.stringify({ message: trimmed, pendingActionId: lastDraft?.planId })
         });
 
         // Newer server shape: { pendingActionId, plan, requiresConfirm }

@@ -170,10 +170,14 @@ export default function ChatWidget() {
 
     try {
       if (isWriteIntent(trimmed)) {
+        const lastDraft = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.metadata?.aiDraft)?.metadata?.aiDraft;
+
         const data = await apiFetch<AiPlanResponse | AiPlanAltResponse>("/ai/plan", {
           method: "POST",
           auth: true,
-          body: JSON.stringify({ message: trimmed })
+          body: JSON.stringify({ message: trimmed, pendingActionId: lastDraft?.planId })
         });
 
         if ((data as any)?.plan && "requiresConfirm" in (data as any)) {

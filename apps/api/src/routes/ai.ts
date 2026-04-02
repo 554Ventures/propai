@@ -16,6 +16,7 @@ const router: Router = Router();
 
 type PlanRequestBody = {
   message?: string;
+  pendingActionId?: string;
   scope?: {
     propertyId?: string;
   };
@@ -170,10 +171,85 @@ router.post(
       return;
     }
 
-    const { message, scope } = req.body as PlanRequestBody;
+    const { message, scope, pendingActionId } = req.body as PlanRequestBody;
     const trimmedMessage = String(message ?? "").trim();
     if (!trimmedMessage) {
       res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    // If we have an in-progress action, let the user provide missing fields as JSON.
+    if (pendingActionId) {
+      const id = String(pendingActionId).trim();
+      const existing = await prisma.aiActionLog.findFirst({ where: { id, organizationId, userId } });
+      if (!existing) {
+        res.status(404).json({ error: "Pending action not found" });
+        return;
+      }
+
+      // Expected follow-up formats:
+      // - JSON: {"category":"Utilities"}
+      // - Plain text: treated as category when missing category
+      const payload = existing.payload as any;
+      const plan = payload?.plan as AiActionPlan | undefined;
+      if (!plan || !Array.isArray(plan.toolCalls) || plan.toolCalls.length === 0) {
+        res.status(409).json({ error: "Pending action is not planable" });
+        return;
+      }
+
+      const call = plan.toolCalls[0];
+      const args = { ...(call.args ?? {}) } as Record<string, unknown>;
+
+      let patch: Record<string, unknown> = {};
+      const t = trimmedMessage;
+      if (t.startsWith("{")) {
+        try {
+          patch = JSON.parse(t);
+        } catch {
+          patch = {};
+        }
+      }
+
+      // If no structured patch, treat text as category if category missing.
+      if (Object.keys(patch).length === 0 && (args.category == null || String(args.category).trim() === "")) {
+        patch = { category: trimmedMessage };
+      }
+
+      call.args = { ...args, ...patch };
+
+      await prisma.aiActionLog.update({
+        where: { id: existing.id },
+        data: {
+          payload: { ...payload, plan, lastUserMessage: trimmedMessage } as any
+        }
+      });
+
+      // Check for remaining missing fields (v0 only supports cashflow right now).
+      if (call.toolName === "createCashflowTransaction") {
+        const missing: string[] = [];
+        if (!call.args.type) missing.push("type");
+        if (!call.args.amount) missing.push("amount");
+        if (!call.args.date) missing.push("date");
+        if (!call.args.category) missing.push("category");
+
+        if (missing.length > 0) {
+          res.json({
+            pendingActionId: existing.id,
+            plan: {
+              summary: `I still need: ${missing.join(", ")}.`,
+              toolCalls: plan.toolCalls
+            },
+            requiresConfirm: false
+          });
+          return;
+        }
+      }
+
+      res.json({
+        pendingActionId: existing.id,
+        plan,
+        requiresConfirm: true
+      });
       return;
     }
 
@@ -194,6 +270,42 @@ router.post(
         plan: {
           summary: assistantText ?? "No supported write action detected.",
           toolCalls: []
+        },
+        requiresConfirm: false
+      });
+      return;
+    }
+
+    // If we have a cashflow transaction missing category, ask for it but keep a pending action.
+    if (
+      plannedCalls.length === 1 &&
+      plannedCalls[0].toolName === "createCashflowTransaction" &&
+      (!plannedCalls[0].args.category || String(plannedCalls[0].args.category).trim() === "")
+    ) {
+      const plan: AiActionPlan = {
+        summary: "Could you please provide the category for the expense?",
+        toolCalls: plannedCalls
+      };
+
+      const created = await prisma.aiActionLog.create({
+        data: {
+          userId,
+          organizationId,
+          actionType: plannedCalls[0].toolName,
+          status: "PENDING",
+          payload: {
+            message: trimmedMessage,
+            scope: scope ?? null,
+            plan
+          } as any
+        }
+      });
+
+      res.json({
+        pendingActionId: created.id,
+        plan: {
+          summary: "What category should I use?",
+          toolCalls: plan.toolCalls
         },
         requiresConfirm: false
       });
