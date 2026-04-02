@@ -90,6 +90,103 @@ describe("/ai plan/confirm/cancel", () => {
     expect(confirmAgain.body.status).toBe("CONFIRMED");
   });
 
+  it("returns structured clarify payload (pendingActionId + choices) for missing fields", async () => {
+    const token = await createToken();
+
+    const planRes = await request(app)
+      .post("/ai/plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        message: JSON.stringify({
+          tool: "createCashflowTransaction",
+          args: {
+            type: "expense",
+            amount: 42,
+            date: "2026-04-01"
+            // category intentionally omitted
+          }
+        })
+      });
+
+    expect(planRes.status).toBe(200);
+    expect(planRes.body.requiresConfirm).toBe(false);
+    expect(typeof planRes.body.pendingActionId).toBe("string");
+    expect(planRes.body.clarify?.pendingActionId).toBe(planRes.body.pendingActionId);
+    expect(Array.isArray(planRes.body.clarify?.choices)).toBe(true);
+    expect(planRes.body.clarify.choices.some((c: any) => c.field === "category")).toBe(true);
+
+    const followUp = await request(app)
+      .post("/ai/plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        pendingActionId: planRes.body.pendingActionId,
+        message: JSON.stringify({ category: "Utilities" })
+      });
+
+    expect(followUp.status).toBe(200);
+    expect(followUp.body.requiresConfirm).toBe(true);
+    expect(followUp.body.pendingActionId).toBe(planRes.body.pendingActionId);
+  });
+
+  it("plans and confirms tenant + maintenance request tools", async () => {
+    const token = await createToken();
+
+    // Tenant
+    const tenantPlan = await request(app)
+      .post("/ai/plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        message: JSON.stringify({
+          tool: "createTenant",
+          args: { firstName: "Taylor", lastName: "Renter", email: "taylor@example.com" }
+        })
+      });
+    expect(tenantPlan.status).toBe(200);
+    expect(tenantPlan.body.requiresConfirm).toBe(true);
+
+    const tenantConfirm = await request(app)
+      .post("/ai/confirm")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ actionId: tenantPlan.body.pendingActionId });
+    expect(tenantConfirm.status).toBe(200);
+    expect(tenantConfirm.body.ok).toBe(true);
+
+    // Maintenance request needs a property
+    const me = await prisma.user.findUnique({ where: { email: user.email } });
+    expect(me).toBeTruthy();
+    const property = await prisma.property.create({
+      data: {
+        userId: me!.id,
+        organizationId: me!.defaultOrgId,
+        name: "Fixit House",
+        addressLine1: "1 Repair Rd",
+        city: "Austin",
+        state: "TX",
+        postalCode: "78701",
+        country: "US"
+      }
+    });
+
+    const maintPlan = await request(app)
+      .post("/ai/plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        message: JSON.stringify({
+          tool: "createMaintenanceRequest",
+          args: { propertyId: property.id, title: "Leaky faucet", description: "Kitchen sink leaking" }
+        })
+      });
+    expect(maintPlan.status).toBe(200);
+    expect(maintPlan.body.requiresConfirm).toBe(true);
+
+    const maintConfirm = await request(app)
+      .post("/ai/confirm")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ actionId: maintPlan.body.pendingActionId });
+    expect(maintConfirm.status).toBe(200);
+    expect(maintConfirm.body.ok).toBe(true);
+  });
+
   it("cancels a pending action", async () => {
     const token = await createToken();
 

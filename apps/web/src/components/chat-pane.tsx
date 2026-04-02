@@ -40,6 +40,10 @@ type ChatMessage = {
       kind: string;
       summary: string;
       fields: Record<string, unknown>;
+      toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
+      clarify?: {
+        choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
+      };
     };
     aiReceipt?: {
       title: string;
@@ -77,9 +81,14 @@ type AiPlanAltResponse = {
   pendingActionId: string;
   requiresConfirm: boolean;
   plan: {
-    kind: string;
     summary: string;
-    fields: Record<string, unknown>;
+    toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
+    kind?: string;
+    fields?: Record<string, unknown>;
+  };
+  clarify?: {
+    pendingActionId: string;
+    choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
   };
 };
 
@@ -96,11 +105,8 @@ type AiPlanAltClarifyResponse = {
 
 type AiConfirmResponse = {
   ok: true;
-  result: {
-    id: string;
-    href?: string;
-    [key: string]: unknown;
-  };
+  status: string;
+  result: Array<{ toolName: string; output: any }> | any;
 };
 
 const quickActions = [
@@ -239,7 +245,9 @@ export default function ChatPane() {
                       planId: d.pendingActionId,
                       kind: (d.plan as any).kind ?? "",
                       summary: d.plan.summary ?? "",
-                      fields: (d.plan as any).fields ?? {}
+                      fields: (d.plan as any).fields ?? {},
+                      toolCalls: (d.plan as any).toolCalls ?? [],
+                      clarify: (d as any).clarify ? { choices: (d as any).clarify.choices ?? [] } : undefined
                     }
                   }
                 : null
@@ -258,7 +266,8 @@ export default function ChatPane() {
                 planId: d.pendingActionId,
                 kind: (d.plan as any).kind ?? "",
                 summary: d.plan.summary,
-                fields: (d.plan as any).fields ?? {}
+                fields: (d.plan as any).fields ?? {},
+                toolCalls: (d.plan as any).toolCalls ?? []
               }
             }
           };
@@ -396,8 +405,22 @@ export default function ChatPane() {
       const data = await apiFetch<AiConfirmResponse>("/ai/confirm", {
         method: "POST",
         auth: true,
-        body: JSON.stringify({ planId })
+        body: JSON.stringify({ actionId: planId })
       });
+
+      const first = Array.isArray((data as any).result) ? (data as any).result[0] : null;
+      const toolName = first?.toolName as string | undefined;
+      const output = first?.output as any;
+      const createdId = output?.id ? String(output.id) : undefined;
+
+      const href =
+        toolName === "createProperty" && createdId
+          ? `/properties/${createdId}`
+          : toolName === "createTenant" && createdId
+            ? `/tenants/${createdId}`
+            : toolName === "createMaintenanceRequest" && createdId
+              ? `/maintenance/${createdId}`
+              : undefined;
 
       setMessages((prev) =>
         prev.map((msg) => {
@@ -410,8 +433,10 @@ export default function ChatPane() {
               aiDraft: undefined,
               aiReceipt: {
                 title: "Saved",
-                href: data.result.href,
-                detail: `Created record ${data.result.id}`
+                href,
+                detail: toolName
+                  ? `Confirmed ${toolName}${createdId ? ` (id=${createdId})` : ""}`
+                  : "Confirmed"
               }
             }
           };
@@ -420,7 +445,8 @@ export default function ChatPane() {
 
       // Best-effort: notify rest of app to refresh data.
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("propai:data:changed", { detail: { kind: "cashflow" } }));
+        const kind = toolName === "createCashflowTransaction" ? "cashflow" : toolName === "createProperty" ? "properties" : "records";
+        window.dispatchEvent(new CustomEvent("propai:data:changed", { detail: { kind } }));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm");
@@ -435,7 +461,7 @@ export default function ChatPane() {
       await apiFetch<{ ok: true }>("/ai/cancel", {
         method: "POST",
         auth: true,
-        body: JSON.stringify({ planId })
+        body: JSON.stringify({ actionId: planId })
       });
       setMessages((prev) =>
         prev.map((msg) => {
@@ -576,12 +602,19 @@ export default function ChatPane() {
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Draft</p>
                     <p className="mt-1 text-sm font-semibold text-slate-100">{msg.metadata.aiDraft.summary}</p>
+                    {msg.metadata.aiDraft.toolCalls?.[0]?.toolName ? (
+                      <p className="mt-1 text-[11px] text-slate-400">Tool: {msg.metadata.aiDraft.toolCalls[0].toolName}</p>
+                    ) : null}
                   </div>
 
                   <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 px-3 py-2 text-xs text-slate-200">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">Fields</p>
                     <ul className="mt-2 space-y-1">
-                      {Object.entries(msg.metadata.aiDraft.fields).map(([key, value]) => (
+                      {Object.entries(
+                        Object.keys(msg.metadata.aiDraft.fields ?? {}).length > 0
+                          ? msg.metadata.aiDraft.fields
+                          : (msg.metadata.aiDraft.toolCalls?.[0]?.args ?? {})
+                      ).map(([key, value]) => (
                         <li key={key} className="flex items-start justify-between gap-3">
                           <span className="text-slate-400">{key}</span>
                           <span className="text-right text-slate-100">
@@ -592,10 +625,41 @@ export default function ChatPane() {
                     </ul>
                   </div>
 
+                  {msg.metadata.aiDraft.clarify?.choices?.length ? (
+                    <div className="space-y-2">
+                      {msg.metadata.aiDraft.clarify.choices.map((choice) => (
+                        <div key={choice.field} className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] text-slate-400">{choice.field}:</span>
+                          {choice.options.map((opt) => (
+                            <button
+                              key={`${choice.field}-${String(opt.value)}`}
+                              onClick={() =>
+                                sendMessage(
+                                  JSON.stringify({
+                                    [choice.field]: opt.value
+                                  })
+                                )
+                              }
+                              className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-200 transition hover:border-cyan-400/70"
+                              disabled={loading}
+                              title={`Set ${choice.field}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
                   <div className="flex items-center gap-2">
                     <Button
                       onClick={() => confirmDraft(msg.metadata!.aiDraft!.planId)}
-                      disabled={loading || confirmingPlanId === msg.metadata.aiDraft.planId}
+                      disabled={
+                        loading ||
+                        confirmingPlanId === msg.metadata.aiDraft.planId ||
+                        Boolean(msg.metadata.aiDraft.clarify?.choices?.length)
+                      }
                     >
                       {confirmingPlanId === msg.metadata.aiDraft.planId ? "Confirming…" : "Confirm"}
                     </Button>

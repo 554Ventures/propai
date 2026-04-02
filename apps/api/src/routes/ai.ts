@@ -24,10 +24,147 @@ type PlanRequestBody = {
 
 type ConfirmRequestBody = {
   actionId?: string;
+  // Back-compat with older web payloads.
+  planId?: string;
 };
 
 type CancelRequestBody = {
   actionId?: string;
+  // Back-compat with older web payloads.
+  planId?: string;
+};
+
+type ClarifyChoiceOption = {
+  label: string;
+  value: string | number | boolean | null;
+};
+
+type ClarifyChoice = {
+  field: string;
+  options: ClarifyChoiceOption[];
+};
+
+const toISODate = (d: Date) => {
+  // YYYY-MM-DD
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const computeMissingFields = (toolName: string, args: Record<string, unknown>) => {
+  const missing: string[] = [];
+  const has = (key: string) => {
+    const v = (args as any)[key];
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    return true;
+  };
+
+  if (toolName === "createCashflowTransaction") {
+    if (!has("type")) missing.push("type");
+    if (!has("amount")) missing.push("amount");
+    if (!has("date")) missing.push("date");
+    if (!has("category")) missing.push("category");
+  } else if (toolName === "createProperty") {
+    if (!has("name")) missing.push("name");
+    if (!has("addressLine1")) missing.push("addressLine1");
+    if (!has("city")) missing.push("city");
+    if (!has("state")) missing.push("state");
+    if (!has("postalCode")) missing.push("postalCode");
+  } else if (toolName === "createTenant") {
+    if (!has("firstName")) missing.push("firstName");
+    if (!has("lastName")) missing.push("lastName");
+  } else if (toolName === "createMaintenanceRequest") {
+    if (!has("propertyId")) missing.push("propertyId");
+    if (!has("title")) missing.push("title");
+  }
+  return missing;
+};
+
+const buildClarifyChoices = async (opts: {
+  organizationId: string;
+  toolName: AiActionToolName;
+  args: Record<string, unknown>;
+  missing: string[];
+}): Promise<ClarifyChoice[]> => {
+  const { organizationId, toolName, args, missing } = opts;
+  const choices: ClarifyChoice[] = [];
+
+  // Quick picks for cashflow.
+  if (toolName === "createCashflowTransaction") {
+    if (missing.includes("type")) {
+      choices.push({
+        field: "type",
+        options: [
+          { label: "Expense", value: "expense" },
+          { label: "Income", value: "income" }
+        ]
+      });
+    }
+
+    if (missing.includes("date")) {
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      choices.push({
+        field: "date",
+        options: [
+          { label: "Today", value: toISODate(today) },
+          { label: "Yesterday", value: toISODate(yesterday) }
+        ]
+      });
+    }
+
+    if (missing.includes("category")) {
+      choices.push({
+        field: "category",
+        options: [
+          { label: "Repairs", value: "Repairs" },
+          { label: "Utilities", value: "Utilities" },
+          { label: "Supplies", value: "Supplies" },
+          { label: "Insurance", value: "Insurance" },
+          { label: "Taxes", value: "Taxes" },
+          { label: "HOA", value: "HOA" }
+        ]
+      });
+    }
+
+    // Property is optional; offer quick picks when user has properties.
+    if (args.propertyId == null) {
+      const properties = await prisma.property.findMany({
+        where: { organizationId },
+        select: { id: true, name: true },
+        orderBy: { createdAt: "desc" }
+      });
+      if (properties.length > 0) {
+        choices.push({
+          field: "propertyId",
+          options: [
+            { label: "No property", value: null },
+            ...properties.map((p) => ({ label: p.name, value: p.id }))
+          ]
+        });
+      }
+    }
+  }
+
+  // For maintenance requests, property choice is high-value.
+  if (toolName === "createMaintenanceRequest" && missing.includes("propertyId")) {
+    const properties = await prisma.property.findMany({
+      where: { organizationId },
+      select: { id: true, name: true },
+      orderBy: { createdAt: "desc" }
+    });
+    if (properties.length > 0) {
+      choices.push({
+        field: "propertyId",
+        options: properties.map((p) => ({ label: p.name, value: p.id }))
+      });
+    }
+  }
+
+  return choices;
 };
 
 const buildSystemPrompt = () => {
@@ -215,6 +352,14 @@ router.post(
         patch = { category: trimmedMessage };
       }
 
+      // Small convenience: treat plain "expense"/"income" as type when missing.
+      if (Object.keys(patch).length === 0 && (args.type == null || String(args.type).trim() === "")) {
+        const lower = trimmedMessage.toLowerCase();
+        if (lower === "expense" || lower === "income") {
+          patch = { type: lower };
+        }
+      }
+
       call.args = { ...args, ...patch };
 
       await prisma.aiActionLog.update({
@@ -224,25 +369,28 @@ router.post(
         }
       });
 
-      // Check for remaining missing fields (v0 only supports cashflow right now).
-      if (call.toolName === "createCashflowTransaction") {
-        const missing: string[] = [];
-        if (!call.args.type) missing.push("type");
-        if (!call.args.amount) missing.push("amount");
-        if (!call.args.date) missing.push("date");
-        if (!call.args.category) missing.push("category");
+      const missing = computeMissingFields(call.toolName, call.args ?? {});
+      if (missing.length > 0) {
+        const choices = await buildClarifyChoices({
+          organizationId,
+          toolName: call.toolName,
+          args: call.args ?? {},
+          missing
+        });
 
-        if (missing.length > 0) {
-          res.json({
+        res.json({
+          pendingActionId: existing.id,
+          plan: {
+            summary: `I still need: ${missing.join(", ")}.`,
+            toolCalls: plan.toolCalls
+          },
+          clarify: {
             pendingActionId: existing.id,
-            plan: {
-              summary: `I still need: ${missing.join(", ")}.`,
-              toolCalls: plan.toolCalls
-            },
-            requiresConfirm: false
-          });
-          return;
-        }
+            choices
+          },
+          requiresConfirm: false
+        });
+        return;
       }
 
       res.json({
@@ -276,40 +424,50 @@ router.post(
       return;
     }
 
-    // If we have a cashflow transaction missing category, ask for it but keep a pending action.
-    if (
-      plannedCalls.length === 1 &&
-      plannedCalls[0].toolName === "createCashflowTransaction" &&
-      (!plannedCalls[0].args.category || String(plannedCalls[0].args.category).trim() === "")
-    ) {
-      const plan: AiActionPlan = {
-        summary: "Could you please provide the category for the expense?",
-        toolCalls: plannedCalls
-      };
+    // If we have a single planned call but missing required fields, start a pending action and ask.
+    if (plannedCalls.length === 1) {
+      const missing = computeMissingFields(plannedCalls[0].toolName, plannedCalls[0].args ?? {});
+      if (missing.length > 0) {
+        const plan: AiActionPlan = {
+          summary: `I need a bit more info: ${missing.join(", ")}.`,
+          toolCalls: plannedCalls
+        };
 
-      const created = await prisma.aiActionLog.create({
-        data: {
-          userId,
+        const created = await prisma.aiActionLog.create({
+          data: {
+            userId,
+            organizationId,
+            actionType: plannedCalls[0].toolName,
+            status: "PENDING",
+            payload: {
+              message: trimmedMessage,
+              scope: scope ?? null,
+              plan
+            } as any
+          }
+        });
+
+        const choices = await buildClarifyChoices({
           organizationId,
-          actionType: plannedCalls[0].toolName,
-          status: "PENDING",
-          payload: {
-            message: trimmedMessage,
-            scope: scope ?? null,
-            plan
-          } as any
-        }
-      });
+          toolName: plannedCalls[0].toolName,
+          args: plannedCalls[0].args ?? {},
+          missing
+        });
 
-      res.json({
-        pendingActionId: created.id,
-        plan: {
-          summary: "What category should I use?",
-          toolCalls: plan.toolCalls
-        },
-        requiresConfirm: false
-      });
-      return;
+        res.json({
+          pendingActionId: created.id,
+          plan: {
+            summary: plan.summary,
+            toolCalls: plan.toolCalls
+          },
+          clarify: {
+            pendingActionId: created.id,
+            choices
+          },
+          requiresConfirm: false
+        });
+        return;
+      }
     }
 
     const plan: AiActionPlan = {
@@ -351,8 +509,8 @@ router.post(
       return;
     }
 
-    const { actionId } = req.body as ConfirmRequestBody;
-    const id = String(actionId ?? "").trim();
+    const { actionId, planId } = req.body as ConfirmRequestBody;
+    const id = String(actionId ?? planId ?? "").trim();
     if (!id) {
       res.status(400).json({ error: "actionId is required" });
       return;
@@ -448,8 +606,8 @@ router.post(
       return;
     }
 
-    const { actionId } = req.body as CancelRequestBody;
-    const id = String(actionId ?? "").trim();
+    const { actionId, planId } = req.body as CancelRequestBody;
+    const id = String(actionId ?? planId ?? "").trim();
     if (!id) {
       res.status(400).json({ error: "actionId is required" });
       return;
