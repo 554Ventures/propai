@@ -73,6 +73,8 @@ model Organization {
   aiSecurityEvents AiSecurityEvent[]
   aiBudget     AiBudget[]
 
+  aiActionLogs AiActionLog[]
+
   invitations Invitation[]
 }
 
@@ -120,6 +122,8 @@ model User {
   aiUsage      AiUsage[]
   aiSecurityEvents AiSecurityEvent[]
   aiBudget     AiBudget?
+
+  aiActionLogs AiActionLog[]
 
   sentInvitations Invitation[] @relation("InvitedBy")
 
@@ -494,4 +498,25 @@ model AiBudget {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+}
+
+model AiActionLog {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  actionType     String
+  payload        Json
+  status         String
+  result         Json?
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, userId])
+  @@index([organizationId, status])
+  @@index([organizationId, actionType])
 }

@@ -16,6 +16,7 @@ import chatRoutes from "./routes/chat.js";
 import leaseRoutes from "./routes/leases.js";
 import orgInviteRoutes from "./routes/org-invites.js";
 import cashflowRoutes from "./routes/cashflow.js";
+import aiRoutes from "./routes/ai.js";
 import { requireAuth } from "./middleware/auth.js";
 import { errorHandler, notFound } from "./middleware/error.js";
 
@@ -42,6 +43,9 @@ app.use("/api/insights", requireAuth, insightsRoutes);
 app.use("/api/dashboard", requireAuth, dashboardRoutes);
 app.use("/api/documents", requireAuth, documentRoutes);
 app.use("/api/chat", requireAuth, chatRoutes);
+
+// Two-step AI write confirmation flow.
+app.use("/ai", requireAuth, aiRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

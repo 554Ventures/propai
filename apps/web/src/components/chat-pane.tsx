@@ -28,6 +28,17 @@ type ChatMessage = {
   metadata?: {
     toolCalls?: ToolCallLog[];
     citations?: Citation[];
+    aiDraft?: {
+      planId: string;
+      kind: string;
+      summary: string;
+      fields: Record<string, unknown>;
+    };
+    aiReceipt?: {
+      title: string;
+      href?: string;
+      detail?: string;
+    };
   } | null;
 };
 
@@ -41,6 +52,27 @@ type ChatResponse = {
   response: string;
   citations?: Citation[];
   toolCalls?: ToolCallLog[];
+};
+
+type AiPlanResponse =
+  | {
+      mode: "draft";
+      draft: {
+        planId: string;
+        kind: string;
+        summary: string;
+        fields: Record<string, unknown>;
+      };
+    }
+  | { mode: "chat"; message: string };
+
+type AiConfirmResponse = {
+  ok: true;
+  result: {
+    id: string;
+    href?: string;
+    [key: string]: unknown;
+  };
 };
 
 const quickActions = [
@@ -61,8 +93,16 @@ export default function ChatPane() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const isWriteIntent = useCallback((text: string) => {
+    const lower = text.toLowerCase();
+    const hasVerb = /(log|add|create|record|enter)/.test(lower);
+    const hasNoun = /(expense|income|transaction|payment|spent|received)/.test(lower);
+    return hasVerb && hasNoun;
+  }, []);
 
   const sessionId = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -111,36 +151,135 @@ export default function ChatPane() {
     setLoading(true);
 
     try {
-      const payload = {
-        message: trimmed,
-        sessionId: localStorage.getItem(STORAGE_KEY) ?? undefined
-      };
-      const data = await apiFetch<ChatResponse>("/api/chat", {
-        method: "POST",
-        auth: true,
-        body: JSON.stringify(payload)
-      });
+      if (isWriteIntent(trimmed)) {
+        const data = await apiFetch<AiPlanResponse>("/ai/plan", {
+          method: "POST",
+          auth: true,
+          body: JSON.stringify({ message: trimmed })
+        });
 
-      if (data.sessionId) {
-        localStorage.setItem(STORAGE_KEY, data.sessionId);
-      }
-
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: data.response,
-        createdAt: new Date().toISOString(),
-        metadata: {
-          toolCalls: data.toolCalls ?? [],
-          citations: data.citations ?? []
+        if (data.mode === "draft") {
+          const assistantMessage: ChatMessage = {
+            id: `assistant-draft-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            metadata: {
+              aiDraft: data.draft
+            }
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        } else {
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: data.message,
+            createdAt: new Date().toISOString()
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
         }
-      };
+      } else {
+        const payload = {
+          message: trimmed,
+          sessionId: localStorage.getItem(STORAGE_KEY) ?? undefined
+        };
+        const data = await apiFetch<ChatResponse>("/api/chat", {
+          method: "POST",
+          auth: true,
+          body: JSON.stringify(payload)
+        });
 
-      setMessages((prev) => [...prev, assistantMessage]);
+        if (data.sessionId) {
+          localStorage.setItem(STORAGE_KEY, data.sessionId);
+        }
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: data.response,
+          createdAt: new Date().toISOString(),
+          metadata: {
+            toolCalls: data.toolCalls ?? [],
+            citations: data.citations ?? []
+          }
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send message");
     } finally {
       setLoading(false);
+    }
+  }, [isWriteIntent]);
+
+  const confirmDraft = useCallback(async (planId: string) => {
+    setError(null);
+    setConfirmingPlanId(planId);
+    try {
+      const data = await apiFetch<AiConfirmResponse>("/ai/confirm", {
+        method: "POST",
+        auth: true,
+        body: JSON.stringify({ planId })
+      });
+
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.metadata?.aiDraft?.planId !== planId) return msg;
+          return {
+            ...msg,
+            content: "",
+            metadata: {
+              ...msg.metadata,
+              aiDraft: undefined,
+              aiReceipt: {
+                title: "Saved",
+                href: data.result.href,
+                detail: `Created record ${data.result.id}`
+              }
+            }
+          };
+        })
+      );
+
+      // Best-effort: notify rest of app to refresh data.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("propai:data:changed", { detail: { kind: "cashflow" } }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to confirm");
+    } finally {
+      setConfirmingPlanId(null);
+    }
+  }, []);
+
+  const cancelDraft = useCallback(async (planId: string) => {
+    setError(null);
+    try {
+      await apiFetch<{ ok: true }>("/ai/cancel", {
+        method: "POST",
+        auth: true,
+        body: JSON.stringify({ planId })
+      });
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.metadata?.aiDraft?.planId !== planId) return msg;
+          return {
+            ...msg,
+            content: "",
+            metadata: {
+              ...msg.metadata,
+              aiDraft: undefined,
+              aiReceipt: {
+                title: "Cancelled",
+                detail: "No changes were made."
+              }
+            }
+          };
+        })
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel");
     }
   }, []);
 
@@ -180,7 +319,59 @@ export default function ChatPane() {
                 msg.role === "user" ? "bg-cyan-500/20 text-cyan-100" : "bg-slate-900/70 text-slate-200"
               }`}
             >
-              {msg.role === "assistant" ? (
+              {msg.role === "assistant" && msg.metadata?.aiDraft ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Draft</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-100">{msg.metadata.aiDraft.summary}</p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 px-3 py-2 text-xs text-slate-200">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">Fields</p>
+                    <ul className="mt-2 space-y-1">
+                      {Object.entries(msg.metadata.aiDraft.fields).map(([key, value]) => (
+                        <li key={key} className="flex items-start justify-between gap-3">
+                          <span className="text-slate-400">{key}</span>
+                          <span className="text-right text-slate-100">
+                            {typeof value === "string" ? value : JSON.stringify(value)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={() => confirmDraft(msg.metadata!.aiDraft!.planId)}
+                      disabled={loading || confirmingPlanId === msg.metadata.aiDraft.planId}
+                    >
+                      {confirmingPlanId === msg.metadata.aiDraft.planId ? "Confirming…" : "Confirm"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => cancelDraft(msg.metadata!.aiDraft!.planId)}
+                      disabled={loading || confirmingPlanId === msg.metadata.aiDraft.planId}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : msg.role === "assistant" && msg.metadata?.aiReceipt ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-slate-100">{msg.metadata.aiReceipt.title}</p>
+                  {msg.metadata.aiReceipt.detail ? (
+                    <p className="text-xs text-slate-300">{msg.metadata.aiReceipt.detail}</p>
+                  ) : null}
+                  {msg.metadata.aiReceipt.href ? (
+                    <a
+                      href={msg.metadata.aiReceipt.href}
+                      className="text-xs font-semibold text-cyan-200 hover:text-cyan-100"
+                    >
+                      View
+                    </a>
+                  ) : null}
+                </div>
+              ) : msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none">
                   <ReactMarkdown
                     components={{
