@@ -1119,6 +1119,25 @@ router.post(
         });
         return;
       }
+
+      // If the strict planner couldn't produce a write plan, fall back to the legacy
+      // OpenAI tool-call planner (still guarded by strict tool schemas + server-side arg validation).
+      if (plannedCalls.length === 0) {
+        const aiPlan = await planWithOpenAI(trimmedMessage, {
+          sessionSummary: (sessionContext as any)?.summary ?? null,
+          propertyName: sessionContext?.property?.name ?? null
+        });
+        plannedCalls = aiPlan.planned
+          .map((p) => {
+            const validated = validateWriteToolArgs(p.toolName, p.args);
+            if (!validated.ok) return null;
+            return { toolName: p.toolName, args: validated.value };
+          })
+          .filter(Boolean) as any;
+        if (!assistantText && aiPlan.assistantText) {
+          assistantText = aiPlan.assistantText;
+        }
+      }
     }
 
     // If the planner returned a clarification question, do NOT fall back into read-only chat mode.
