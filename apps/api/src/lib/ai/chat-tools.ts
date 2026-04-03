@@ -96,8 +96,6 @@ export const chatToolDefinitions = [
           },
           required: ["start", "end"] as const
         },
-        propertyId: { type: "string" as const, nullable: true },
-        propertyName: { type: "string" as const, nullable: true }
       },
       required: ["range"] as const
     },
@@ -143,8 +141,6 @@ export const chatToolDefinitions = [
           },
           required: ["start", "end"] as const
         },
-        propertyId: { type: "string" as const, nullable: true },
-        propertyName: { type: "string" as const, nullable: true }
       },
       required: ["range"] as const
     },
@@ -169,8 +165,6 @@ export const chatToolDefinitions = [
           },
           required: ["start", "end"] as const
         },
-        propertyId: { type: "string" as const, nullable: true },
-        propertyName: { type: "string" as const, nullable: true }
       },
       required: ["range"] as const
     },
