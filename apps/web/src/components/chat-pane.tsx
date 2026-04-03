@@ -327,6 +327,22 @@ export default function ChatPane() {
       }
 
       if (data.mode === "clarify" || data.mode === "draft") {
+        // Some server clarify responses may not be tied to a pending action yet.
+        // Render these as a normal assistant message (no draft card) to avoid null crashes.
+        if (data.mode === "clarify" && !data.draft) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `assistant-clarify-${Date.now()}`,
+              role: "assistant",
+              content: data.summary || "I need a bit more info to continue.",
+              createdAt: new Date().toISOString()
+            }
+          ]);
+          focusInput();
+          return;
+        }
+
         const defaultClarifyContent =
           data.mode === "clarify"
             ? data.summary || "I need one more detail to finish this. Please choose an option below."
@@ -339,10 +355,10 @@ export default function ChatPane() {
           metadata: {
             aiDraft: {
               planId: data.pendingActionId,
-              kind: data.draft.kind ?? "",
+              kind: data.draft?.kind ?? "",
               summary: data.summary,
-              fields: data.draft.fields ?? {},
-              toolCalls: data.draft.toolCalls ?? [],
+              fields: data.draft?.fields ?? {},
+              toolCalls: data.draft?.toolCalls ?? [],
               clarify: data.mode === "clarify" ? { choices: data.clarify?.choices ?? [] } : undefined
             }
           }
