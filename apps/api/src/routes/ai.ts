@@ -177,6 +177,21 @@ const computeMissingFields = (toolName: string, args: Record<string, unknown>) =
   } else if (toolName === "createMaintenanceRequest") {
     if (!has("propertyId")) missing.push("propertyId");
     if (!has("title")) missing.push("title");
+  } else if (
+    toolName === "updateProperty" ||
+    toolName === "updateTenant" ||
+    toolName === "updateCashflowTransaction" ||
+    toolName === "updateMaintenanceRequest"
+  ) {
+    if (!has("id")) missing.push("id");
+    if (!has("patch")) missing.push("patch");
+  } else if (
+    toolName === "deleteProperty" ||
+    toolName === "deleteTenant" ||
+    toolName === "deleteCashflowTransaction" ||
+    toolName === "deleteMaintenanceRequest"
+  ) {
+    if (!has("id")) missing.push("id");
   }
   return missing;
 };
@@ -322,6 +337,72 @@ const buildClarifyChoices = async (opts: {
     }
   }
 
+  // For update/delete flows, offer quick id choices.
+  if (missing.includes("id")) {
+    if (toolName === "updateProperty" || toolName === "deleteProperty") {
+      const properties = await prisma.property.findMany({
+        where: { organizationId },
+        select: { id: true, name: true },
+        orderBy: { createdAt: "desc" },
+        take: 5
+      });
+      if (properties.length > 0) {
+        choices.push({
+          field: "id",
+          options: properties.map((p) => ({ label: p.name, value: p.id }))
+        });
+      }
+    }
+
+    if (toolName === "updateTenant" || toolName === "deleteTenant") {
+      const tenants = await prisma.tenant.findMany({
+        where: { organizationId },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: { createdAt: "desc" },
+        take: 5
+      });
+      if (tenants.length > 0) {
+        choices.push({
+          field: "id",
+          options: tenants.map((t) => ({ label: `${t.firstName} ${t.lastName}`.trim(), value: t.id }))
+        });
+      }
+    }
+
+    if (toolName === "updateCashflowTransaction" || toolName === "deleteCashflowTransaction") {
+      const txs = await prisma.transaction.findMany({
+        where: { organizationId },
+        select: { id: true, type: true, amount: true, date: true, category: true },
+        orderBy: { date: "desc" },
+        take: 5
+      });
+      if (txs.length > 0) {
+        choices.push({
+          field: "id",
+          options: txs.map((t) => ({
+            label: `${t.type} $${t.amount} ${t.category} (${toISODate(new Date(t.date))})`,
+            value: t.id
+          }))
+        });
+      }
+    }
+
+    if (toolName === "updateMaintenanceRequest" || toolName === "deleteMaintenanceRequest") {
+      const reqs = await prisma.maintenanceRequest.findMany({
+        where: { organizationId },
+        select: { id: true, title: true, status: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        take: 5
+      });
+      if (reqs.length > 0) {
+        choices.push({
+          field: "id",
+          options: reqs.map((r) => ({ label: `${r.title} (${r.status})`, value: r.id }))
+        });
+      }
+    }
+  }
+
   return choices;
 };
 
@@ -369,6 +450,47 @@ const actionToolDefinitions = [
   },
   {
     type: "function" as const,
+    name: "updateCashflowTransaction",
+    description: "Update a cashflow transaction by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const },
+        patch: {
+          type: "object" as const,
+          additionalProperties: false as const,
+          minProperties: 1 as const,
+          properties: {
+            type: { type: "string" as const, description: "income|expense" },
+            amount: { type: "number" as const },
+            date: { type: "string" as const, description: "ISO date" },
+            category: { type: "string" as const },
+            propertyId: { type: "string" as const },
+            notes: { type: "string" as const }
+          }
+        }
+      },
+      required: ["id", "patch"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "deleteCashflowTransaction",
+    description: "Delete a cashflow transaction by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const }
+      },
+      required: ["id"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
     name: "createProperty",
     description: "Create a property.",
     parameters: {
@@ -382,6 +504,49 @@ const actionToolDefinitions = [
         postalCode: { type: "string" as const }
       },
       required: ["name", "addressLine1", "city", "state", "postalCode"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "updateProperty",
+    description: "Update a property by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const },
+        patch: {
+          type: "object" as const,
+          additionalProperties: false as const,
+          minProperties: 1 as const,
+          properties: {
+            name: { type: "string" as const },
+            addressLine1: { type: "string" as const },
+            addressLine2: { type: "string" as const },
+            city: { type: "string" as const },
+            state: { type: "string" as const },
+            postalCode: { type: "string" as const },
+            country: { type: "string" as const },
+            notes: { type: "string" as const }
+          }
+        }
+      },
+      required: ["id", "patch"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "deleteProperty",
+    description: "Delete a property by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const }
+      },
+      required: ["id"] as const
     },
     strict: true as const
   },
@@ -402,6 +567,45 @@ const actionToolDefinitions = [
   },
   {
     type: "function" as const,
+    name: "updateTenant",
+    description: "Update a tenant by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const },
+        patch: {
+          type: "object" as const,
+          additionalProperties: false as const,
+          minProperties: 1 as const,
+          properties: {
+            firstName: { type: "string" as const },
+            lastName: { type: "string" as const },
+            email: { type: "string" as const },
+            phone: { type: "string" as const }
+          }
+        }
+      },
+      required: ["id", "patch"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "deleteTenant",
+    description: "Delete a tenant by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const }
+      },
+      required: ["id"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
     name: "createMaintenanceRequest",
     description: "Create a maintenance request.",
     parameters: {
@@ -412,6 +616,48 @@ const actionToolDefinitions = [
         title: { type: "string" as const }
       },
       required: ["propertyId", "title"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "updateMaintenanceRequest",
+    description: "Update a maintenance request by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const },
+        patch: {
+          type: "object" as const,
+          additionalProperties: false as const,
+          minProperties: 1 as const,
+          properties: {
+            propertyId: { type: "string" as const },
+            unitId: { type: "string" as const },
+            tenantId: { type: "string" as const },
+            title: { type: "string" as const },
+            description: { type: "string" as const },
+            cost: { type: "number" as const },
+            status: { type: "string" as const, description: "PENDING|IN_PROGRESS|COMPLETED" }
+          }
+        }
+      },
+      required: ["id", "patch"] as const
+    },
+    strict: true as const
+  },
+  {
+    type: "function" as const,
+    name: "deleteMaintenanceRequest",
+    description: "Delete a maintenance request by id.",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        id: { type: "string" as const }
+      },
+      required: ["id"] as const
     },
     strict: true as const
   }
@@ -1131,7 +1377,15 @@ router.post(
 
     // If the planner returned a clarification question, do NOT fall back into read-only chat mode.
     // Clarify must be represented as a first-class state (mode=clarify), not a normal chat response.
-    if (plannedCalls.length === 0 && assistantText) {
+    const looksLikeClarify = (text: string) => {
+      const t = String(text ?? "").trim();
+      if (!t) return false;
+      if (/\?\s*$/.test(t)) return true;
+      if (/^(i\s+need|i\s+need\s+a\s+bit|which|what\s+is\s+the|can\s+you\s+tell\s+me)/i.test(t)) return true;
+      return false;
+    };
+
+    if (plannedCalls.length === 0 && assistantText && looksLikeClarify(assistantText)) {
       const assistantMessage = await prisma.chatMessage.create({
         data: {
           sessionId: chatSession.id,

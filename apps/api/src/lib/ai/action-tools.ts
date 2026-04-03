@@ -1,10 +1,19 @@
 import prisma from "../prisma.js";
+import { Prisma } from "@prisma/client";
 
 export type AiActionToolName =
   | "createCashflowTransaction"
   | "createProperty"
   | "createTenant"
-  | "createMaintenanceRequest";
+  | "createMaintenanceRequest"
+  | "updateCashflowTransaction"
+  | "deleteCashflowTransaction"
+  | "updateProperty"
+  | "deleteProperty"
+  | "updateTenant"
+  | "deleteTenant"
+  | "updateMaintenanceRequest"
+  | "deleteMaintenanceRequest";
 
 export type AiPlannedToolCall = {
   toolName: AiActionToolName;
@@ -61,7 +70,15 @@ export const supportedActionToolNames: AiActionToolName[] = [
   "createCashflowTransaction",
   "createProperty",
   "createTenant",
-  "createMaintenanceRequest"
+  "createMaintenanceRequest",
+  "updateCashflowTransaction",
+  "deleteCashflowTransaction",
+  "updateProperty",
+  "deleteProperty",
+  "updateTenant",
+  "deleteTenant",
+  "updateMaintenanceRequest",
+  "deleteMaintenanceRequest"
 ];
 
 /**
@@ -245,6 +262,22 @@ const ensureTenantInOrg = async (organizationId: string, tenantId: string) => {
   return Boolean(ok);
 };
 
+const ensureTransactionInOrg = async (organizationId: string, transactionId: string) => {
+  const ok = await prisma.transaction.findFirst({
+    where: { id: transactionId, organizationId },
+    select: { id: true }
+  });
+  return Boolean(ok);
+};
+
+const ensureMaintenanceRequestInOrg = async (organizationId: string, requestId: string) => {
+  const ok = await prisma.maintenanceRequest.findFirst({
+    where: { id: requestId, organizationId },
+    select: { id: true, propertyId: true }
+  });
+  return ok;
+};
+
 export const executeActionTool = async (toolName: AiActionToolName, args: Record<string, unknown>, ctx: ActionExecutionContext) => {
   const userId = ctx.userId;
   const organizationId = ctx.organizationId;
@@ -286,6 +319,81 @@ export const executeActionTool = async (toolName: AiActionToolName, args: Record
       });
     }
 
+    case "updateCashflowTransaction": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const ok = await ensureTransactionInOrg(organizationId, id);
+      if (!ok) throw new Error("Invalid transaction id");
+
+      const patch = isRecord(args.patch) ? (args.patch as Record<string, unknown>) : null;
+      if (!patch) throw new Error("patch is required");
+
+      const updateData: Record<string, unknown> = {};
+
+      if (patch.type !== undefined) {
+        const typeRaw = asString(patch.type);
+        const type =
+          typeRaw?.toLowerCase() === "income" || typeRaw === "INCOME"
+            ? "INCOME"
+            : typeRaw?.toLowerCase() === "expense" || typeRaw === "EXPENSE"
+              ? "EXPENSE"
+              : null;
+        if (!type) throw new Error("Invalid type (income|expense)");
+        updateData.type = type;
+      }
+
+      if (patch.amount !== undefined) {
+        const amount = asPositiveNumber(patch.amount);
+        if (amount == null) throw new Error("amount must be a positive number");
+        updateData.amount = amount;
+      }
+
+      if (patch.date !== undefined) {
+        const date = asDate(patch.date);
+        if (!date) throw new Error("Invalid date");
+        updateData.date = date;
+      }
+
+      if (patch.category !== undefined) {
+        const category = asString(patch.category);
+        if (!category) throw new Error("Invalid category");
+        updateData.category = category;
+      }
+
+      if (patch.propertyId !== undefined) {
+        const propertyId = asOptionalString(patch.propertyId);
+        if (propertyId) {
+          const okProperty = await ensurePropertyInOrg(organizationId, propertyId);
+          if (!okProperty) throw new Error("Invalid propertyId");
+        }
+        updateData.propertyId = propertyId ?? null;
+      }
+
+      if (patch.notes !== undefined) {
+        const notes = asOptionalString(patch.notes);
+        updateData.notes = notes ?? null;
+      }
+
+      if (Object.keys(updateData).length === 0) throw new Error("patch must include at least one field");
+
+      return prisma.transaction.update({
+        where: { id },
+        data: updateData
+      });
+    }
+
+    case "deleteCashflowTransaction": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const ok = await ensureTransactionInOrg(organizationId, id);
+      if (!ok) throw new Error("Invalid transaction id");
+
+      await prisma.transaction.delete({ where: { id } });
+      return { id, deleted: true };
+    }
+
     case "createProperty": {
       const name = asString(args.name);
       const addressLine1 = asString(args.addressLine1);
@@ -316,6 +424,76 @@ export const executeActionTool = async (toolName: AiActionToolName, args: Record
       });
     }
 
+    case "updateProperty": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const existing = await prisma.property.findFirst({
+        where: { id, organizationId },
+        select: { id: true }
+      });
+      if (!existing) throw new Error("Invalid property id");
+
+      const patch = isRecord(args.patch) ? (args.patch as Record<string, unknown>) : null;
+      if (!patch) throw new Error("patch is required");
+
+      const updateData: Record<string, unknown> = {};
+      const setStr = (key: string) => {
+        if (patch[key] !== undefined) {
+          const v = asOptionalString(patch[key]);
+          // allow null to clear optional fields, but not required ones
+          updateData[key] = v ?? null;
+        }
+      };
+
+      // Required-ish fields: only accept non-empty strings when present
+      const setNonEmpty = (key: string) => {
+        if (patch[key] !== undefined) {
+          const v = asString(patch[key]);
+          if (!v) throw new Error(`${key} must be a non-empty string`);
+          updateData[key] = v;
+        }
+      };
+
+      setNonEmpty("name");
+      setNonEmpty("addressLine1");
+      setStr("addressLine2");
+      setNonEmpty("city");
+      setNonEmpty("state");
+      setNonEmpty("postalCode");
+      setNonEmpty("country");
+      setStr("notes");
+
+      if (Object.keys(updateData).length === 0) throw new Error("patch must include at least one field");
+
+      return prisma.property.update({
+        where: { id },
+        data: updateData
+      });
+    }
+
+    case "deleteProperty": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const existing = await prisma.property.findFirst({
+        where: { id, organizationId },
+        select: { id: true }
+      });
+      if (!existing) throw new Error("Invalid property id");
+
+      try {
+        await prisma.property.delete({ where: { id } });
+      } catch (err: unknown) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
+          throw new Error("Cannot delete property while it has related records");
+        }
+        throw err;
+      }
+
+      return { id, deleted: true };
+    }
+
     case "createTenant": {
       const firstName = asString(args.firstName);
       const lastName = asString(args.lastName);
@@ -335,6 +513,52 @@ export const executeActionTool = async (toolName: AiActionToolName, args: Record
           phone: phone ?? undefined
         }
       });
+    }
+
+    case "updateTenant": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const ok = await ensureTenantInOrg(organizationId, id);
+      if (!ok) throw new Error("Invalid tenant id");
+
+      const patch = isRecord(args.patch) ? (args.patch as Record<string, unknown>) : null;
+      if (!patch) throw new Error("patch is required");
+
+      const updateData: Record<string, unknown> = {};
+      if (patch.firstName !== undefined) {
+        const v = asString(patch.firstName);
+        if (!v) throw new Error("firstName must be a non-empty string");
+        updateData.firstName = v;
+      }
+      if (patch.lastName !== undefined) {
+        const v = asString(patch.lastName);
+        if (!v) throw new Error("lastName must be a non-empty string");
+        updateData.lastName = v;
+      }
+      if (patch.email !== undefined) {
+        const v = asOptionalString(patch.email);
+        updateData.email = v ?? null;
+      }
+      if (patch.phone !== undefined) {
+        const v = asOptionalString(patch.phone);
+        updateData.phone = v ?? null;
+      }
+
+      if (Object.keys(updateData).length === 0) throw new Error("patch must include at least one field");
+
+      return prisma.tenant.update({ where: { id }, data: updateData });
+    }
+
+    case "deleteTenant": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const ok = await ensureTenantInOrg(organizationId, id);
+      if (!ok) throw new Error("Invalid tenant id");
+
+      await prisma.tenant.delete({ where: { id } });
+      return { id, deleted: true };
     }
 
     case "createMaintenanceRequest": {
@@ -375,6 +599,84 @@ export const executeActionTool = async (toolName: AiActionToolName, args: Record
           cost: cost ?? undefined
         }
       });
+    }
+
+    case "updateMaintenanceRequest": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const existing = await ensureMaintenanceRequestInOrg(organizationId, id);
+      if (!existing) throw new Error("Invalid maintenance request id");
+
+      const patch = isRecord(args.patch) ? (args.patch as Record<string, unknown>) : null;
+      if (!patch) throw new Error("patch is required");
+
+      const updateData: Record<string, unknown> = {};
+
+      if (patch.propertyId !== undefined) {
+        const propertyId = asString(patch.propertyId);
+        if (!propertyId) throw new Error("propertyId must be a non-empty string");
+        const okProperty = await ensurePropertyInOrg(organizationId, propertyId);
+        if (!okProperty) throw new Error("Invalid propertyId");
+        updateData.propertyId = propertyId;
+      }
+
+      if (patch.unitId !== undefined) {
+        const unitId = asOptionalString(patch.unitId);
+        if (unitId) {
+          const unit = await ensureUnitInOrg(organizationId, unitId);
+          if (!unit) throw new Error("Invalid unitId");
+        }
+        updateData.unitId = unitId ?? null;
+      }
+
+      if (patch.tenantId !== undefined) {
+        const tenantId = asOptionalString(patch.tenantId);
+        if (tenantId) {
+          const okTenant = await ensureTenantInOrg(organizationId, tenantId);
+          if (!okTenant) throw new Error("Invalid tenantId");
+        }
+        updateData.tenantId = tenantId ?? null;
+      }
+
+      if (patch.title !== undefined) {
+        const title = asString(patch.title);
+        if (!title) throw new Error("title must be a non-empty string");
+        updateData.title = title;
+      }
+
+      if (patch.description !== undefined) {
+        const description = asOptionalString(patch.description);
+        updateData.description = description ?? null;
+      }
+
+      if (patch.cost !== undefined) {
+        const cost = patch.cost == null ? null : asPositiveNumber(patch.cost);
+        if (patch.cost != null && cost == null) throw new Error("cost must be a positive number");
+        updateData.cost = cost;
+      }
+
+      if (patch.status !== undefined) {
+        const s = asString(patch.status);
+        const allowed = new Set(["PENDING", "IN_PROGRESS", "COMPLETED"]);
+        if (!s || !allowed.has(s)) throw new Error("Invalid status");
+        updateData.status = s;
+      }
+
+      if (Object.keys(updateData).length === 0) throw new Error("patch must include at least one field");
+
+      return prisma.maintenanceRequest.update({ where: { id }, data: updateData });
+    }
+
+    case "deleteMaintenanceRequest": {
+      const id = asString(args.id);
+      if (!id) throw new Error("id is required");
+
+      const existing = await ensureMaintenanceRequestInOrg(organizationId, id);
+      if (!existing) throw new Error("Invalid maintenance request id");
+
+      await prisma.maintenanceRequest.delete({ where: { id } });
+      return { id, deleted: true };
     }
 
     default:

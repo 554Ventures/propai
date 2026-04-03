@@ -82,5 +82,92 @@ export const validateWriteToolArgs = (toolName: AiActionToolName, args: unknown)
     };
   }
 
+  // Update tools use an {id, patch} envelope (patch keys are allowlisted).
+  if (toolName === "updateProperty") {
+    const v = pick(["id", "patch"]);
+    const patch = sanitizeObject(v.patch);
+    return {
+      ok: true,
+      value: {
+        id: v.id,
+        patch: (({ name, addressLine1, addressLine2, city, state, postalCode, country, notes }) => ({
+          ...(name !== undefined ? { name } : {}),
+          ...(addressLine1 !== undefined ? { addressLine1 } : {}),
+          ...(addressLine2 !== undefined ? { addressLine2 } : {}),
+          ...(city !== undefined ? { city } : {}),
+          ...(state !== undefined ? { state } : {}),
+          ...(postalCode !== undefined ? { postalCode } : {}),
+          ...(country !== undefined ? { country } : {}),
+          ...(notes !== undefined ? { notes } : {})
+        }))(patch as any)
+      }
+    };
+  }
+
+  if (toolName === "updateTenant") {
+    const v = pick(["id", "patch"]);
+    const patch = sanitizeObject(v.patch);
+    return {
+      ok: true,
+      value: {
+        id: v.id,
+        patch: (({ firstName, lastName, email, phone }) => ({
+          ...(firstName !== undefined ? { firstName } : {}),
+          ...(lastName !== undefined ? { lastName } : {}),
+          ...(email !== undefined ? { email } : {}),
+          ...(phone !== undefined ? { phone } : {})
+        }))(patch as any)
+      }
+    };
+  }
+
+  if (toolName === "updateCashflowTransaction") {
+    const v = pick(["id", "patch"]);
+    const patch = sanitizeObject(v.patch);
+    return {
+      ok: true,
+      value: {
+        id: v.id,
+        patch: (({ type, amount, date, category, propertyId, notes }) => ({
+          ...(type !== undefined ? { type } : {}),
+          ...(amount !== undefined ? { amount } : {}),
+          ...(date !== undefined ? { date } : {}),
+          ...(category !== undefined ? { category } : {}),
+          ...(propertyId !== undefined ? { propertyId } : {}),
+          ...(notes !== undefined ? { notes } : {})
+        }))(patch as any)
+      }
+    };
+  }
+
+  if (toolName === "updateMaintenanceRequest") {
+    const v = pick(["id", "patch"]);
+    const patch = sanitizeObject(v.patch);
+    return {
+      ok: true,
+      value: {
+        id: v.id,
+        patch: (({ propertyId, unitId, tenantId, title, description, cost, status }) => ({
+          ...(propertyId !== undefined ? { propertyId } : {}),
+          ...(unitId !== undefined ? { unitId } : {}),
+          ...(tenantId !== undefined ? { tenantId } : {}),
+          ...(title !== undefined ? { title } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(cost !== undefined ? { cost } : {}),
+          ...(status !== undefined ? { status } : {})
+        }))(patch as any)
+      }
+    };
+  }
+
+  if (
+    toolName === "deleteCashflowTransaction" ||
+    toolName === "deleteProperty" ||
+    toolName === "deleteTenant" ||
+    toolName === "deleteMaintenanceRequest"
+  ) {
+    return { ok: true, value: pick(["id"]) };
+  }
+
   return { ok: false, error: "Unknown tool" };
 };

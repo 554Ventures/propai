@@ -39,15 +39,26 @@ type ChatMessage = {
       planId: string;
       kind: string;
       summary: string;
+      requiresConfirm?: boolean;
       fields: Record<string, unknown>;
       toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
       clarify?: {
+        missing?: string[];
         choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
       };
     };
     aiReceipt?: {
       title: string;
       href?: string;
+      detail?: string;
+    };
+    aiResult?: {
+      title?: string;
+      detail?: string;
+      payload?: any;
+    };
+    aiError?: {
+      title: string;
       detail?: string;
     };
   } | null;
@@ -121,6 +132,7 @@ type AiChatResponse =
         toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
       };
       clarify?: {
+        missing?: string[];
         choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
       };
       sessionId?: string;
@@ -177,6 +189,7 @@ export default function ChatPane() {
   const [error, setError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -192,11 +205,6 @@ export default function ChatPane() {
     }, 0);
   }, []);
 
-  const latestMessagesRef = useRef<ChatMessage[]>([]);
-  useEffect(() => {
-    latestMessagesRef.current = messages;
-  }, [messages]);
-
   const lastDraft = useMemo(() => {
     return [...messages]
       .reverse()
@@ -204,7 +212,31 @@ export default function ChatPane() {
   }, [messages]);
 
   const isDraftPending = Boolean(lastDraft?.planId);
-  const draftNeedsClarify = Boolean(lastDraft?.clarify?.choices?.length);
+
+  useEffect(() => {
+    // If no pending action is currently selected, default to the most recent draft.
+    // This enables multiple draft cards in the transcript while keeping a predictable active action.
+    if (pendingActionId) return;
+    if (lastDraft?.planId) setPendingActionId(lastDraft.planId);
+  }, [lastDraft?.planId, pendingActionId]);
+
+  const pendingActionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    pendingActionIdRef.current = pendingActionId;
+  }, [pendingActionId]);
+
+  const clearPendingAction = useCallback(() => {
+    setPendingActionId(null);
+    pendingActionIdRef.current = null;
+  }, []);
+
+  const getMissingFields = useCallback((draft?: NonNullable<NonNullable<ChatMessage["metadata"]>["aiDraft"]>) => {
+    if (!draft?.clarify) return [] as string[];
+    const explicit = draft.clarify.missing ?? [];
+    if (explicit.length > 0) return explicit;
+    const fromChoices = (draft.clarify.choices ?? []).map((c: { field: string }) => c.field).filter(Boolean);
+    return Array.from(new Set(fromChoices));
+  }, []);
 
   // NOTE: we no longer heuristically decide whether something is a write on the client.
   // The server (/ai/chat) is the single authority and returns mode=chat|clarify|draft|result.
@@ -267,133 +299,161 @@ export default function ChatPane() {
   const sendMessage = useCallback(
     async (text: string) => {
       if (loading) return;
-    const trimmed = text.trim();
-    if (!trimmed) return;
+      const trimmed = text.trim();
+      if (!trimmed) return;
 
-    // Guardrail UX: if we're awaiting clarification, don't allow arbitrary text that can
-    // accidentally fork context. Force the user to either pick a choice or cancel/start over.
-    if (draftNeedsClarify) {
-      setError("Please choose one of the options above (or Cancel/Start over) to continue.");
+      const optimisticMessage: ChatMessage = {
+        id: `local-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+        createdAt: new Date().toISOString()
+      };
+
+      setMessages((prev) => [...prev, optimisticMessage]);
+      setInput("");
+      setError(null);
+      setLoading(true);
       focusInput();
-      return;
-    }
 
-    const optimisticMessage: ChatMessage = {
-      id: `local-${Date.now()}`,
-      role: "user",
-      content: trimmed,
-      createdAt: new Date().toISOString()
-    };
+      try {
+        const selectedPendingActionId = pendingActionIdRef.current;
 
-    setMessages((prev) => [...prev, optimisticMessage]);
-    setInput("");
-    setError(null);
-    setLoading(true);
-    focusInput();
+        const data = await apiFetch<AiChatResponse>("/ai/chat", {
+          method: "POST",
+          auth: true,
+          body: JSON.stringify({
+            message: trimmed,
+            pendingActionId: selectedPendingActionId,
+            sessionId: localStorage.getItem(STORAGE_KEY) ?? undefined
+          })
+        });
 
-    try {
-      // Always read the latest messages at send-time to avoid stale closure issues.
-      const draft = [...latestMessagesRef.current]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.metadata?.aiDraft)?.metadata?.aiDraft;
+        if (data.sessionId) {
+          localStorage.setItem(STORAGE_KEY, data.sessionId);
+          setActiveSessionId(data.sessionId);
+        }
 
-      const data = await apiFetch<AiChatResponse>("/ai/chat", {
-        method: "POST",
-        auth: true,
-        body: JSON.stringify({
-          message: trimmed,
-          pendingActionId: draft?.planId,
-          sessionId: localStorage.getItem(STORAGE_KEY) ?? undefined
-        })
-      });
-
-      if (data.sessionId) {
-        localStorage.setItem(STORAGE_KEY, data.sessionId);
-        setActiveSessionId(data.sessionId);
-      }
-
-      if (data.mode === "chat") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `assistant-${Date.now()}`,
-            role: "assistant",
-            content: data.message,
-            createdAt: new Date().toISOString()
-          }
-        ]);
-        void refreshSessions();
-        return;
-      }
-
-      if (data.mode === "clarify" || data.mode === "draft") {
-        // Some server clarify responses may not be tied to a pending action yet.
-        // Render these as a normal assistant message (no draft card) to avoid null crashes.
-        if (data.mode === "clarify" && !data.draft) {
+        if (data.mode === "chat") {
+          setPendingActionId(null);
           setMessages((prev) => [
             ...prev,
             {
-              id: `assistant-clarify-${Date.now()}`,
+              id: `assistant-${Date.now()}`,
               role: "assistant",
-              content: data.summary || "I need a bit more info to continue.",
+              content: data.message,
               createdAt: new Date().toISOString()
             }
           ]);
+          void refreshSessions();
+          return;
+        }
+
+        if (data.mode === "clarify" || data.mode === "draft") {
+          setPendingActionId(data.pendingActionId);
+
+          if (data.mode === "clarify" && !data.draft) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `assistant-clarify-${Date.now()}`,
+                role: "assistant",
+                content: data.summary || "I need a bit more info to continue.",
+                createdAt: new Date().toISOString()
+              }
+            ]);
+            focusInput();
+            return;
+          }
+
+          const defaultClarifyContent =
+            data.mode === "clarify"
+              ? data.summary || "I need one more detail to finish this. Please choose an option below."
+              : "";
+
+          const assistantMessage: ChatMessage = {
+            id: `${data.mode === "clarify" ? "assistant-clarify" : "assistant-draft"}-${Date.now()}`,
+            role: "assistant",
+            content: defaultClarifyContent,
+            createdAt: new Date().toISOString(),
+            metadata: {
+              aiDraft: {
+                planId: data.pendingActionId,
+                kind: data.draft?.kind ?? "",
+                summary: data.summary,
+                requiresConfirm: data.mode === "draft" ? (data.requiresConfirm ?? true) : false,
+                fields: data.draft?.fields ?? {},
+                toolCalls: data.draft?.toolCalls ?? [],
+                clarify:
+                  data.mode === "clarify"
+                    ? {
+                        missing: data.clarify?.missing,
+                        choices: data.clarify?.choices ?? []
+                      }
+                    : undefined
+              }
+            }
+          };
+
+          setMessages((prev) => [...prev, assistantMessage]);
           focusInput();
           return;
         }
 
-        const defaultClarifyContent =
-          data.mode === "clarify"
-            ? data.summary || "I need one more detail to finish this. Please choose an option below."
-            : "";
-        const assistantMessage: ChatMessage = {
-          id: `${data.mode === "clarify" ? "assistant-clarify" : "assistant-draft"}-${Date.now()}`,
-          role: "assistant",
-          content: defaultClarifyContent,
-          createdAt: new Date().toISOString(),
-          metadata: {
-            aiDraft: {
-              planId: data.pendingActionId,
-              kind: data.draft?.kind ?? "",
-              summary: data.summary,
-              fields: data.draft?.fields ?? {},
-              toolCalls: data.draft?.toolCalls ?? [],
-              clarify: data.mode === "clarify" ? { choices: data.clarify?.choices ?? [] } : undefined
+        if (data.mode === "result") {
+          setPendingActionId(null);
+          const assistantMessage: ChatMessage = {
+            id: `assistant-result-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            metadata: {
+              aiReceipt: {
+                title: data.receipt?.title ?? "Saved",
+                href: data.receipt?.href,
+                detail: data.receipt?.detail
+              },
+              aiResult: {
+                title: data.receipt?.title ?? "Result",
+                detail: data.receipt?.detail,
+                payload: data.result
+              }
+            }
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+          void refreshSessions();
+          return;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to send message";
+        setError(message);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-error-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            metadata: {
+              aiError: {
+                title: "Something went wrong",
+                detail: message
+              }
             }
           }
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-        // Nudge focus back to input so user can continue quickly.
-        focusInput();
-        return;
+        ]);
+      } finally {
+        setLoading(false);
       }
-
-      if (data.mode === "result") {
-        const assistantMessage: ChatMessage = {
-          id: `assistant-result-${Date.now()}`,
-          role: "assistant",
-          content: "",
-          createdAt: new Date().toISOString(),
-          metadata: {
-            aiReceipt: {
-              title: data.receipt?.title ?? "Saved",
-              href: data.receipt?.href,
-              detail: data.receipt?.detail
-            }
-          }
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-        void refreshSessions();
-        return;
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send message");
-    } finally {
-      setLoading(false);
-    }
     },
-    [loading, messages, refreshSessions]
+    [focusInput, loading, refreshSessions]
+  );
+
+  const sendAsNewAction = useCallback(
+    async (text: string) => {
+      clearPendingAction();
+      await sendMessage(text);
+    },
+    [clearPendingAction, sendMessage]
   );
 
   const startNewChat = useCallback(async () => {
@@ -630,10 +690,9 @@ export default function ChatPane() {
           {quickActions.map((action) => (
             <button
               key={action.label}
-              onClick={() => sendMessage(action.message)}
+              onClick={() => sendAsNewAction(action.message)}
               className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-200 transition hover:border-cyan-400/70"
-              disabled={loading || isDraftPending}
-              title={isDraftPending ? "Finish or cancel the draft first" : undefined}
+              disabled={loading}
             >
               {action.label}
             </button>
@@ -877,24 +936,25 @@ export default function ChatPane() {
               }
             }}
             placeholder={
-              draftNeedsClarify
-                ? "Choose an option above to continue…"
-                : isDraftPending
-                  ? "Continue this draft (or Cancel/Start over)…"
-                  : "Ask about rent, properties, expenses..."
+              pendingActionId
+                ? "Continue this action (reply in plain text or JSON)…"
+                : "Ask about rent, properties, expenses..."
             }
             rows={1}
             className="flex-1 resize-none rounded-2xl border border-slate-800/70 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/70 focus:outline-none"
-            disabled={loading || draftNeedsClarify}
+            disabled={loading}
           />
-          <Button onClick={() => sendMessage(input)} disabled={loading || draftNeedsClarify}>
+          {pendingActionId ? (
+            <Button variant="secondary" onClick={clearPendingAction} disabled={loading}>
+              New action
+            </Button>
+          ) : null}
+          <Button onClick={() => sendMessage(input)} disabled={loading}>
             Send
           </Button>
         </div>
-        {draftNeedsClarify ? (
-          <p className="mt-2 text-[11px] text-slate-400">
-            Waiting for your selection above. This keeps the draft in context.
-          </p>
+        {pendingActionId ? (
+          <p className="mt-2 text-[11px] text-slate-400">Continuing pending action {pendingActionId.slice(0, 6)}…</p>
         ) : null}
       </div>
     </div>
