@@ -147,7 +147,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -160,14 +160,14 @@ export const chatToolDefinitions = [
         propertyName: { type: "string" as const, nullable: true }
       }
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
     name: "listProperties",
     description: "List the user's properties.",
     parameters: { type: "object" as const, properties: {} },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -197,7 +197,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -227,7 +227,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -242,7 +242,7 @@ export const chatToolDefinitions = [
       },
       required: ["query"] as const
     },
-    strict: false as const
+    strict: true as const
   }
 ];
 

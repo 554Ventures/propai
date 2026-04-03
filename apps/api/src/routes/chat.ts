@@ -14,6 +14,7 @@ import { moderateText } from "../security/moderation.js";
 import { calculateAiCostUsd, emptyUsage, mergeUsage } from "../security/costs.js";
 import { extractUsage } from "../security/usage.js";
 import { logAiSecurityEvent } from "../security/security-logger.js";
+import { validateChatToolArgs } from "../lib/ai/tool-arg-validators.js";
 import { updateChatSessionRollingSummary } from "../lib/ai/rolling-summary.js";
 
 const router: Router = Router();
@@ -189,12 +190,38 @@ router.post(
           continue;
         }
 
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
-        } catch {
-          parsedArgs = {};
-        }
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            parsedArgs = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
+          } catch {
+            parsedArgs = {};
+          }
+
+          const validated = validateChatToolArgs(toolCall.name, parsedArgs);
+          if (!validated.ok) {
+            await logAiSecurityEvent({
+              userId,
+              sessionId,
+              type: "tool_args_invalid",
+              severity: "medium",
+              message: "Invalid tool arguments",
+              metadata: { toolName: toolCall.name, error: validated.error }
+            });
+            toolCallLogs.push({
+              toolName: toolCall.name,
+              inputs: parsedArgs,
+              outputs: { error: validated.error },
+              status: "error"
+            });
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: JSON.stringify({ error: validated.error })
+            });
+            continue;
+          }
+
+          parsedArgs = validated.value;
 
         try {
           const result = await executeChatTool(toolCall.name, parsedArgs, {

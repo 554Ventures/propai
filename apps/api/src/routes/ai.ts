@@ -20,6 +20,7 @@ import { calculateAiCostUsd, emptyUsage, mergeUsage } from "../security/costs.js
 import { extractUsage } from "../security/usage.js";
 import { logAiSecurityEvent } from "../security/security-logger.js";
 import { updateChatSessionRollingSummary } from "../lib/ai/rolling-summary.js";
+import { validateChatToolArgs, validateWriteToolArgs } from "../lib/ai/tool-arg-validators.js";
 
 const router: Router = Router();
 
@@ -365,7 +366,7 @@ const actionToolDefinitions = [
       },
       required: ["type", "amount", "date", "category"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -385,7 +386,7 @@ const actionToolDefinitions = [
       },
       required: ["name", "addressLine1", "city", "state", "postalCode"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -401,7 +402,7 @@ const actionToolDefinitions = [
       },
       required: ["firstName", "lastName"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -419,7 +420,7 @@ const actionToolDefinitions = [
       },
       required: ["propertyId", "title"] as const
     },
-    strict: false as const
+    strict: true as const
   }
 ];
 
@@ -1081,9 +1082,38 @@ router.post(
       });
 
       if (plan.intent === "write" && Array.isArray(plan.writePlans) && plan.writePlans.length > 0) {
-        plannedCalls = plan.writePlans.map((p) => ({ toolName: p.toolName, args: p.args }));
+        plannedCalls = plan.writePlans
+          .map((p) => {
+            const validated = validateWriteToolArgs(p.toolName, p.args);
+            if (!validated.ok) return null;
+            return { toolName: p.toolName, args: validated.value };
+          })
+          .filter(Boolean) as any;
       } else if (plan.intent === "clarify") {
-        assistantText = plan.clarificationQuestion ?? "I need a bit more information to do that."
+        assistantText = plan.clarificationQuestion ?? "I need a bit more information to do that.";
+      } else if (plan.intent === "write") {
+        // Planner believed this was a write, but failed to produce a valid tool plan.
+        // Do NOT fall back to read-only chat mode (prevents hallucinated success narratives).
+        const assistantMessage = await prisma.chatMessage.create({
+          data: {
+            sessionId: chatSession.id,
+            role: "assistant",
+            content:
+              "I can create/update things in PropAI, but I couldn’t form a valid action plan from that message. What would you like to do: create a property, log a cashflow transaction, create a tenant, or create a maintenance request?"
+          }
+        });
+        await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
+        res.json({
+          mode: "clarify",
+          pendingActionId: null,
+          summary: "I need a bit more info to draft the action.",
+          draft: null,
+          clarify: null,
+          requiresConfirm: false,
+          sessionId: chatSession.id,
+          messageId: assistantMessage.id
+        });
+        return;
       }
     }
 
@@ -1186,6 +1216,33 @@ router.post(
           } catch {
             parsedArgs = {};
           }
+
+          // Drop unknown keys / enforce minimal shapes before executing.
+          const validated = validateChatToolArgs(toolCall.name, parsedArgs);
+          if (!validated.ok) {
+            await logAiSecurityEvent({
+              userId,
+              sessionId: chatSession.id,
+              type: "tool_args_invalid",
+              severity: "medium",
+              message: "Invalid tool arguments",
+              metadata: { toolName: toolCall.name, error: validated.error }
+            });
+            toolCallLogs.push({
+              toolName: toolCall.name,
+              inputs: parsedArgs,
+              outputs: { error: validated.error },
+              status: "error"
+            });
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: JSON.stringify({ error: validated.error })
+            });
+            continue;
+          }
+
+          parsedArgs = validated.value;
 
           try {
             const result = await executeChatTool(toolCall.name, parsedArgs, {
