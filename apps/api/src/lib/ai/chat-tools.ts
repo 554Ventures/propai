@@ -1,12 +1,9 @@
 import prisma from "../prisma.js";
 
-export type DateRangeInput =
-  | string
-  | {
-      start?: string;
-      end?: string;
-      preset?: string;
-    };
+export type DateRangeInput = {
+  start: string;
+  end: string;
+};
 
 export type ResolvedDateRange = {
   start: Date;
@@ -24,50 +21,11 @@ const parseDate = (value?: string) => {
   return parsed;
 };
 
-const presetRanges = (now: Date) => {
-  const startThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const endLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-  const startThisYear = new Date(now.getFullYear(), 0, 1);
-  const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-  return {
-    last_month: { start: startLastMonth, end: endLastMonth, label: "last_month" },
-    month_to_date: { start: startThisMonth, end: now, label: "month_to_date" },
-    year_to_date: { start: startThisYear, end: now, label: "year_to_date" },
-    last_30_days: { start: last30Days, end: now, label: "last_30_days" }
-  } as const;
-};
-
 export const resolveDateRange = (input?: DateRangeInput): ResolvedDateRange => {
   const now = new Date();
-  const presets = presetRanges(now);
-
-  if (typeof input === "string") {
-    const normalized = input.trim().toLowerCase().replace(/\s+/g, "_");
-    const preset = presets[normalized as keyof typeof presets];
-    if (preset) {
-      return {
-        start: startOfDay(preset.start),
-        end: endOfDay(preset.end),
-        label: preset.label
-      };
-    }
-  }
-
-  if (input && typeof input === "object") {
-    const presetKey = input.preset?.trim().toLowerCase().replace(/\s+/g, "_");
-    if (presetKey) {
-      const preset = presets[presetKey as keyof typeof presets];
-      if (preset) {
-        return {
-          start: startOfDay(preset.start),
-          end: endOfDay(preset.end),
-          label: preset.label
-        };
-      }
-    }
-
+  // With strict tool schemas, the model must always provide start+end.
+  // If missing/invalid, fall back to last_30_days.
+  if (input) {
     const start = parseDate(input.start);
     const end = parseDate(input.end);
     if (start && end) {
@@ -129,14 +87,14 @@ export const chatToolDefinitions = [
       properties: {
         range: {
           description:
-            "Date range. Provide start/end ISO dates or a preset like last_month, month_to_date, year_to_date, last_30_days.",
+            "Date range. Provide start/end ISO dates. If the user asks for a preset (month-to-date, last month, year-to-date), convert it into concrete start/end dates.",
           type: "object" as const,
           additionalProperties: false as const,
           properties: {
             start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
             end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
-            preset: { type: "string" as const, description: "Optional preset (last_month, month_to_date, year_to_date, last_30_days)" }
-          }
+          },
+          required: ["start", "end"] as const
         },
         propertyId: { type: "string" as const, nullable: true },
         propertyName: { type: "string" as const, nullable: true }
@@ -176,14 +134,14 @@ export const chatToolDefinitions = [
       properties: {
         range: {
           description:
-            "Date range. Provide start/end ISO dates or a preset like last_month, month_to_date, year_to_date, last_30_days.",
+            "Date range. Provide start/end ISO dates. If the user asks for a preset (month-to-date, last month, year-to-date), convert it into concrete start/end dates.",
           type: "object" as const,
           additionalProperties: false as const,
           properties: {
             start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
             end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
-            preset: { type: "string" as const, description: "Optional preset (last_month, month_to_date, year_to_date, last_30_days)" }
-          }
+          },
+          required: ["start", "end"] as const
         },
         propertyId: { type: "string" as const, nullable: true },
         propertyName: { type: "string" as const, nullable: true }
@@ -202,14 +160,14 @@ export const chatToolDefinitions = [
       properties: {
         range: {
           description:
-            "Date range. Provide start/end ISO dates or a preset like last_month, month_to_date, year_to_date, last_30_days.",
+            "Date range. Provide start/end ISO dates. If the user asks for a preset (month-to-date, last month, year-to-date), convert it into concrete start/end dates.",
           type: "object" as const,
           additionalProperties: false as const,
           properties: {
             start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
             end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
-            preset: { type: "string" as const, description: "Optional preset (last_month, month_to_date, year_to_date, last_30_days)" }
-          }
+          },
+          required: ["start", "end"] as const
         },
         propertyId: { type: "string" as const, nullable: true },
         propertyName: { type: "string" as const, nullable: true }
