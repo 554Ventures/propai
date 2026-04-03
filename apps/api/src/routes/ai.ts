@@ -11,6 +11,13 @@ import {
 } from "../lib/ai/action-tools.js";
 import { getOpenAIClient, getOpenAIModel } from "../lib/openai.js";
 import type { ResponseFunctionToolCall } from "openai/resources/responses/responses";
+import { chatToolDefinitions, executeChatTool } from "../lib/ai/chat-tools.js";
+import { filterAiOutput } from "../security/output-filter.js";
+import { moderateText } from "../security/moderation.js";
+import { calculateAiCostUsd, emptyUsage, mergeUsage } from "../security/costs.js";
+import { extractUsage } from "../security/usage.js";
+import { logAiSecurityEvent } from "../security/security-logger.js";
+import { updateChatSessionRollingSummary } from "../lib/ai/rolling-summary.js";
 
 const router: Router = Router();
 
@@ -37,10 +44,35 @@ type ChatRequestBody = {
   clientRequestId?: string;
 };
 
-const summarizeSessionTitle = (text: string) => {
-  const trimmed = text.trim();
-  if (!trimmed) return "Chat";
-  return trimmed.length > 60 ? `${trimmed.slice(0, 57)}...` : trimmed;
+const allowedToolNames = new Set(chatToolDefinitions.map((tool) => tool.name));
+
+const buildChatSystemPrompt = (opts: { propertyName?: string | null; sessionSummary?: string | null }) => {
+  const { propertyName, sessionSummary } = opts;
+  const scopeLine = propertyName
+    ? `Current property context: ${propertyName}.`
+    : "No single property is selected; aggregate across the portfolio unless specified.";
+
+  const summaryLine = sessionSummary
+    ? `Session memory (summary):\n${sessionSummary}`
+    : "Session memory (summary): (none yet)";
+
+  return [
+    "You are PropAI, an assistant for property managers.",
+    scopeLine,
+    summaryLine,
+    "Use the provided tools for any data-driven questions about rent, expenses, leases, or documents.",
+    "If a request is unclear, ask a brief follow-up question.",
+    "When you use tools, summarize results with concise numbers and mention the timeframe.",
+    "Never fabricate data."
+  ].join("\n");
+};
+
+const extractChatToolCalls = (response: { output?: unknown[] }): ResponseFunctionToolCall[] => {
+  if (!Array.isArray(response.output)) return [];
+  return response.output.filter(
+    (item): item is ResponseFunctionToolCall =>
+      typeof item === "object" && item !== null && "type" in item && item.type === "function_call"
+  );
 };
 
 const ensureChatSession = async (opts: {
@@ -72,6 +104,18 @@ const ensureChatSession = async (opts: {
     });
   }
   return session as { id: string; propertyId: string | null };
+};
+
+const getChatSessionContext = async (opts: {
+  sessionId: string;
+  organizationId: string;
+  userId: string;
+}) => {
+  const { sessionId, organizationId, userId } = opts;
+  return prisma.chatSession.findFirst({
+    where: { id: sessionId, organizationId, userId },
+    include: { property: { select: { id: true, name: true } } }
+  });
 };
 
 type ConfirmRequestBody = {
@@ -278,9 +322,22 @@ const buildClarifyChoices = async (opts: {
   return choices;
 };
 
-const buildSystemPrompt = () => {
+const buildSystemPrompt = (opts?: { sessionSummary?: string | null; propertyName?: string | null }) => {
+  const sessionSummary = opts?.sessionSummary ?? null;
+  const propertyName = opts?.propertyName ?? null;
+
+  const scopeLine = propertyName
+    ? `Current property context: ${propertyName}.`
+    : "No single property is selected; aggregate across the portfolio unless specified.";
+
+  const summaryLine = sessionSummary
+    ? `Session memory (summary):\n${sessionSummary}`
+    : "Session memory (summary): (none yet)";
+
   return [
     "You are PropAI Action Planner.",
+    scopeLine,
+    summaryLine,
     "Your job is to translate the user's request into ONE OR MORE tool calls for write actions.",
     "Only use the allowed tools.",
     "Never execute actions; only plan.",
@@ -389,14 +446,14 @@ const normalizePlannedCalls = (calls: Array<{ name: string; arguments?: string }
     .filter(Boolean) as AiPlannedToolCall[];
 };
 
-const planWithOpenAI = async (message: string) => {
+const planWithOpenAI = async (message: string, context?: { sessionSummary?: string | null; propertyName?: string | null }) => {
   const client = getOpenAIClient();
   const model = getOpenAIModel();
 
   const response: any = await client.responses.create({
     model,
     input: [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: buildSystemPrompt(context) },
       { role: "user", content: message }
     ] as any,
     tools: actionToolDefinitions as any,
@@ -677,6 +734,11 @@ router.post(
           }
         });
         await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
+        try {
+          await updateChatSessionRollingSummary({ sessionId: chatSession.id, organizationId, userId });
+        } catch {
+          // best-effort
+        }
 
         res.json({
           mode: "result",
@@ -695,11 +757,28 @@ router.post(
       }
 
       if (action.status === "CONFIRMED") {
+        const assistantMessage = await prisma.chatMessage.create({
+          data: {
+            sessionId: chatSession.id,
+            role: "assistant",
+            content: "",
+            metadata: { aiReceipt: { title: "Saved" }, result: action.result ?? null } as any
+          }
+        });
+        await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
+        try {
+          await updateChatSessionRollingSummary({ sessionId: chatSession.id, organizationId, userId });
+        } catch {
+          // best-effort
+        }
+
         res.json({
           mode: "result",
           pendingActionId: null,
           receipt: { title: "Saved" },
-          result: action.result ?? null
+          result: action.result ?? null,
+          sessionId: chatSession.id,
+          messageId: assistantMessage.id
         });
         return;
       }
@@ -751,12 +830,28 @@ router.post(
           data: { status: "CONFIRMED", result: result as any, error: null }
         });
 
+        const assistantMessage = await prisma.chatMessage.create({
+          data: {
+            sessionId: chatSession.id,
+            role: "assistant",
+            content: "",
+            metadata: { aiReceipt: { title: "Saved" }, result: updated.result ?? null } as any
+          }
+        });
+        await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
+        try {
+          await updateChatSessionRollingSummary({ sessionId: chatSession.id, organizationId, userId });
+        } catch {
+          // best-effort
+        }
+
         res.json({
           mode: "result",
           pendingActionId: null,
           receipt: { title: "Saved" },
           result: updated.result,
-          sessionId: chatSession.id
+          sessionId: chatSession.id,
+          messageId: assistantMessage.id
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Action execution failed";
@@ -950,26 +1045,257 @@ router.post(
     }
 
     if (plannedCalls.length === 0) {
+      // Read-only chat mode: run the same tool-loop as /api/chat (when OpenAI is configured).
+      if (!process.env.OPENAI_API_KEY) {
+        const fallback =
+          assistantText ??
+          "AI chat isn't configured on the server (missing OPENAI_API_KEY). I can still help you plan write actions (expenses, properties, tenants, maintenance).";
+
+        const assistantMessage = await prisma.chatMessage.create({
+          data: {
+            sessionId: chatSession.id,
+            role: "assistant",
+            content: fallback
+          }
+        });
+        await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
+        res.json({
+          mode: "chat",
+          pendingActionId: null,
+          message: fallback,
+          sessionId: chatSession.id,
+          messageId: assistantMessage.id
+        });
+        return;
+      }
+
+      const sessionContext = await getChatSessionContext({
+        sessionId: chatSession.id,
+        organizationId,
+        userId
+      });
+
+      const recentMessages = await prisma.chatMessage.findMany({
+        where: { sessionId: chatSession.id },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      });
+      const orderedMessages = recentMessages.reverse();
+
+      const input = [
+        {
+          role: "system",
+          content: buildChatSystemPrompt({
+            propertyName: sessionContext?.property?.name ?? null,
+            sessionSummary: (sessionContext as any)?.summary ?? null
+          })
+        },
+        ...orderedMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))
+      ];
+
+      const client = getOpenAIClient();
+      const model = getOpenAIModel();
+
+      let response: any = await client.responses.create({
+        model,
+        input: input as any,
+        tools: chatToolDefinitions as any,
+        temperature: 0.2,
+        user: userId
+      });
+      let usageSnapshot = mergeUsage(emptyUsage(), extractUsage(response));
+
+      const toolCallLogs: Array<{
+        toolName: string;
+        inputs: Record<string, unknown>;
+        outputs: unknown;
+        status: "success" | "error";
+      }> = [];
+      const citations: Array<{ label: string; detail: string }> = [];
+
+      for (let iteration = 0; iteration < 3; iteration += 1) {
+        const toolCalls = extractChatToolCalls(response);
+        if (toolCalls.length === 0) break;
+
+        const toolOutputs = [] as Array<{ type: "function_call_output"; call_id: string; output: string }>;
+
+        for (const toolCall of toolCalls) {
+          if (!allowedToolNames.has(toolCall.name)) {
+            await logAiSecurityEvent({
+              userId,
+              sessionId: chatSession.id,
+              type: "tool_call_blocked",
+              severity: "high",
+              message: "Attempted to call unauthorized tool",
+              metadata: { toolName: toolCall.name }
+            });
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: JSON.stringify({ error: "Tool not permitted" })
+            });
+            continue;
+          }
+
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            parsedArgs = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
+          } catch {
+            parsedArgs = {};
+          }
+
+          try {
+            const result = await executeChatTool(toolCall.name, parsedArgs, {
+              userId,
+              organizationId
+            });
+            toolCallLogs.push({
+              toolName: toolCall.name,
+              inputs: parsedArgs,
+              outputs: result.data,
+              status: "success"
+            });
+            if (result.citations) citations.push(...result.citations);
+
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: JSON.stringify(result.data)
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Tool execution failed";
+            toolCallLogs.push({
+              toolName: toolCall.name,
+              inputs: parsedArgs,
+              outputs: { error: message },
+              status: "error"
+            });
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: JSON.stringify({ error: message })
+            });
+          }
+        }
+
+        response = await client.responses.create({
+          model,
+          input: toolOutputs,
+          previous_response_id: response.id,
+          temperature: 0.2,
+          user: userId
+        });
+        usageSnapshot = mergeUsage(usageSnapshot, extractUsage(response));
+      }
+
+      const responseText = response.output_text?.trim() || "Sorry, I could not generate a response.";
+      let safeResponseText = responseText;
+      let outputBlockedReason: string | null = null;
+
+      const outputFilter = filterAiOutput(responseText);
+      if (!outputFilter.allowed) {
+        outputBlockedReason = outputFilter.reason ?? "output_filter";
+      }
+
+      if (!outputBlockedReason && process.env.AI_OUTPUT_MODERATION_ENABLED !== "false") {
+        try {
+          const outputModeration = await moderateText(responseText);
+          if (outputModeration.flagged) {
+            outputBlockedReason = "output_moderation";
+            await logAiSecurityEvent({
+              userId,
+              sessionId: chatSession.id,
+              type: "output_moderation_flag",
+              severity: "high",
+              message: "Assistant output flagged by moderation",
+              metadata: { categories: outputModeration.categories, model: outputModeration.model }
+            });
+          }
+        } catch (error) {
+          outputBlockedReason = "output_moderation_error";
+          await logAiSecurityEvent({
+            userId,
+            sessionId: chatSession.id,
+            type: "output_moderation_error",
+            severity: "high",
+            message: "Output moderation service failed",
+            metadata: { error: error instanceof Error ? error.message : "unknown" }
+          });
+        }
+      }
+
+      if (outputBlockedReason) {
+        safeResponseText = "Sorry, I can't help with that request.";
+        await logAiSecurityEvent({
+          userId,
+          sessionId: chatSession.id,
+          type: "output_blocked",
+          severity: "high",
+          message: "Assistant output blocked by safety filter",
+          metadata: { reason: outputBlockedReason }
+        });
+      }
+
       const assistantMessage = await prisma.chatMessage.create({
         data: {
           sessionId: chatSession.id,
           role: "assistant",
-          content:
-            assistantText ??
-            "I can help with actions like: log an expense/income, create property, create tenant, create maintenance request. Tell me what you want to do (and include amount/date/category for cashflow when possible)."
+          content: safeResponseText,
+          metadata: {
+            toolCalls: toolCallLogs as any,
+            citations: citations as any,
+            outputBlockedReason: outputBlockedReason ?? null
+          }
         }
       });
+
+      if (toolCallLogs.length > 0) {
+        await prisma.toolCallLog.createMany({
+          data: toolCallLogs.map((log) => ({
+            messageId: assistantMessage.id,
+            toolName: log.toolName,
+            inputs: log.inputs as any,
+            outputs: log.outputs as any,
+            status: log.status
+          }))
+        });
+      }
+
       await prisma.chatSession.update({ where: { id: chatSession.id }, data: { updatedAt: new Date() } });
 
-      // IMPORTANT: Never ask for missing write fields in mode=chat.
-      // If we didn't produce a pendingActionId, we must not ask a follow-up that implies we are mid-write.
+      // Update rolling summary/title.
+      try {
+        await updateChatSessionRollingSummary({ sessionId: chatSession.id, organizationId, userId });
+      } catch {
+        // best-effort
+      }
+
+      // Log usage (best-effort; keep parity with /api/chat)
+      try {
+        const costUsd = calculateAiCostUsd(usageSnapshot);
+        await prisma.aiUsage.create({
+          data: {
+            userId,
+            organizationId,
+            sessionId: chatSession.id,
+            messageId: assistantMessage.id,
+            model,
+            inputTokens: usageSnapshot.inputTokens,
+            outputTokens: usageSnapshot.outputTokens,
+            totalTokens: usageSnapshot.totalTokens,
+            costUsd: costUsd > 0 ? costUsd : null
+          }
+        });
+      } catch {
+        // best-effort
+      }
+
       res.json({
         mode: "chat",
         pendingActionId: null,
-        message:
-          assistantText ??
-          "I can help with actions like: log an expense/income, create property, create tenant, create maintenance request. Tell me what you want to do (and include amount/date/category for cashflow when possible)."
-        ,
+        message: safeResponseText,
+        citations,
+        toolCalls: toolCallLogs,
         sessionId: chatSession.id,
         messageId: assistantMessage.id
       });

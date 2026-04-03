@@ -14,18 +14,25 @@ import { moderateText } from "../security/moderation.js";
 import { calculateAiCostUsd, emptyUsage, mergeUsage } from "../security/costs.js";
 import { extractUsage } from "../security/usage.js";
 import { logAiSecurityEvent } from "../security/security-logger.js";
+import { updateChatSessionRollingSummary } from "../lib/ai/rolling-summary.js";
 
 const router: Router = Router();
 const allowedToolNames = new Set(chatToolDefinitions.map((tool) => tool.name));
 
-const buildSystemPrompt = (propertyName?: string | null) => {
+const buildSystemPrompt = (opts: { propertyName?: string | null; sessionSummary?: string | null }) => {
+  const { propertyName, sessionSummary } = opts;
   const scopeLine = propertyName
     ? `Current property context: ${propertyName}.`
     : "No single property is selected; aggregate across the portfolio unless specified.";
 
+  const summaryLine = sessionSummary
+    ? `Session memory (summary):\n${sessionSummary}`
+    : "Session memory (summary): (none yet)";
+
   return [
     "You are PropAI, an assistant for property managers.",
     scopeLine,
+    summaryLine,
     "Use the provided tools for any data-driven questions about rent, expenses, leases, or documents.",
     "If a request is unclear, ask a brief follow-up question.",
     "When you use tools, summarize results with concise numbers and mention the timeframe.",
@@ -129,7 +136,13 @@ router.post(
     const orderedMessages = recentMessages.reverse();
 
     const input = [
-      { role: "system", content: buildSystemPrompt(session.property?.name ?? null) },
+      {
+        role: "system",
+        content: buildSystemPrompt({
+          propertyName: session.property?.name ?? null,
+          sessionSummary: (session as any).summary ?? null
+        })
+      },
       ...orderedMessages.map((msg) => ({ role: msg.role as "user" | "assistant", content: msg.content }))
     ];
 
@@ -290,6 +303,17 @@ router.post(
       }
     });
 
+    // Update rolling summary/title after an assistant message is stored.
+    try {
+      await updateChatSessionRollingSummary({
+        sessionId: session.id,
+        organizationId,
+        userId
+      });
+    } catch {
+      // best-effort
+    }
+
     if (toolCallLogs.length > 0) {
       await prisma.toolCallLog.createMany({
         data: toolCallLogs.map((log) => ({
@@ -392,6 +416,8 @@ router.get(
     res.json(
       sessions.map((session) => ({
         id: session.id,
+        title: (session as any).title ?? null,
+        summary: (session as any).summary ?? null,
         propertyId: session.propertyId,
         property: session.property,
         createdAt: session.createdAt,
@@ -430,6 +456,8 @@ router.post(
 
     res.status(201).json({
       id: session.id,
+      title: (session as any).title ?? null,
+      summary: (session as any).summary ?? null,
       propertyId: session.propertyId,
       property: session.property,
       createdAt: session.createdAt,
