@@ -11,6 +11,7 @@ import {
 } from "../lib/ai/action-tools.js";
 import { getOpenAIClient, getOpenAIModel } from "../lib/openai.js";
 import type { ResponseFunctionToolCall } from "openai/resources/responses/responses";
+import { planAgentTurn } from "../lib/ai/agent-planner.js";
 import { chatToolDefinitions, executeChatTool } from "../lib/ai/chat-tools.js";
 import { filterAiOutput } from "../security/output-filter.js";
 import { moderateText } from "../security/moderation.js";
@@ -1035,13 +1036,30 @@ router.post(
       return;
     }
 
+    // Deterministic-first: use local parser when it can.
     let plannedCalls = parseMessageToToolCalls(trimmedMessage);
     let assistantText: string | null = null;
 
+    // If local parser can't decide, use a strict JSON planner that MUST choose read/write/clarify.
     if (plannedCalls.length === 0 && process.env.OPENAI_API_KEY) {
-      const aiPlan = await planWithOpenAI(trimmedMessage);
-      plannedCalls = aiPlan.planned;
-      assistantText = aiPlan.assistantText || null;
+      const sessionContext = await getChatSessionContext({
+        sessionId: chatSession.id,
+        organizationId,
+        userId
+      });
+
+      const plan = await planAgentTurn({
+        message: trimmedMessage,
+        memorySummary: (sessionContext as any)?.summary ?? null,
+        propertyName: sessionContext?.property?.name ?? null,
+        maxRetries: 1
+      });
+
+      if (plan.intent === "write" && Array.isArray(plan.writePlans) && plan.writePlans.length > 0) {
+        plannedCalls = plan.writePlans.map((p) => ({ toolName: p.toolName, args: p.args }));
+      } else if (plan.intent === "clarify") {
+        assistantText = plan.clarificationQuestion ?? "I need a bit more information to do that."
+      }
     }
 
     if (plannedCalls.length === 0) {
