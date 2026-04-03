@@ -417,6 +417,8 @@ model ChatSession {
   userId         String
   organizationId String
   propertyId     String?
+  title          String?
+  summary        String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

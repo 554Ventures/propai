@@ -125,6 +125,7 @@ export const chatToolDefinitions = [
     description: "Get total rent collected within a date range, optionally scoped to a property.",
     parameters: {
       type: "object" as const,
+      additionalProperties: false as const,
       properties: {
         range: {
           description:
@@ -132,6 +133,7 @@ export const chatToolDefinitions = [
           oneOf: [
             {
               type: "object" as const,
+              additionalProperties: false as const,
               properties: {
                 start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
                 end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
@@ -147,7 +149,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -155,19 +157,20 @@ export const chatToolDefinitions = [
     description: "Get outstanding (pending or late) rent totals, optionally scoped to a property.",
     parameters: {
       type: "object" as const,
+      additionalProperties: false as const,
       properties: {
         propertyId: { type: "string" as const, nullable: true },
         propertyName: { type: "string" as const, nullable: true }
       }
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
     name: "listProperties",
     description: "List the user's properties.",
-    parameters: { type: "object" as const, properties: {} },
-    strict: false as const
+    parameters: { type: "object" as const, additionalProperties: false as const, properties: {} },
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -175,6 +178,7 @@ export const chatToolDefinitions = [
     description: "Get expenses within a date range, optionally scoped to a property.",
     parameters: {
       type: "object" as const,
+      additionalProperties: false as const,
       properties: {
         range: {
           description:
@@ -182,6 +186,7 @@ export const chatToolDefinitions = [
           oneOf: [
             {
               type: "object" as const,
+              additionalProperties: false as const,
               properties: {
                 start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
                 end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
@@ -197,7 +202,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -205,6 +210,7 @@ export const chatToolDefinitions = [
     description: "Get leases ending within a date range, optionally scoped to a property.",
     parameters: {
       type: "object" as const,
+      additionalProperties: false as const,
       properties: {
         range: {
           description:
@@ -212,6 +218,7 @@ export const chatToolDefinitions = [
           oneOf: [
             {
               type: "object" as const,
+              additionalProperties: false as const,
               properties: {
                 start: { type: "string" as const, description: "Start date (YYYY-MM-DD or ISO)" },
                 end: { type: "string" as const, description: "End date (YYYY-MM-DD or ISO)" },
@@ -227,7 +234,7 @@ export const chatToolDefinitions = [
       },
       required: ["range"] as const
     },
-    strict: false as const
+    strict: true as const
   },
   {
     type: "function" as const,
@@ -235,6 +242,7 @@ export const chatToolDefinitions = [
     description: "Find documents by name or keywords, optionally scoped to a property.",
     parameters: {
       type: "object" as const,
+      additionalProperties: false as const,
       properties: {
         query: { type: "string" as const, description: "Search query" },
         propertyId: { type: "string" as const, nullable: true },
@@ -242,7 +250,7 @@ export const chatToolDefinitions = [
       },
       required: ["query"] as const
     },
-    strict: false as const
+    strict: true as const
   }
 ];
 
