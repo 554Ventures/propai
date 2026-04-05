@@ -576,7 +576,7 @@ export default function ChatPane() {
           : toolName === "createTenant" && createdId
             ? `/tenants/${createdId}`
             : toolName === "createMaintenanceRequest" && createdId
-              ? `/maintenance/${createdId}`
+              ? `/properties/${output?.propertyId || createdId}`
               : undefined;
 
       setMessages((prev) =>
