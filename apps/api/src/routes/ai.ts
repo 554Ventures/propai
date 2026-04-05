@@ -446,7 +446,7 @@ const actionToolDefinitions = [
       },
       required: ["type", "amount", "date", "category"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -472,7 +472,7 @@ const actionToolDefinitions = [
       },
       required: ["id", "patch"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -486,7 +486,7 @@ const actionToolDefinitions = [
       },
       required: ["id"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -504,7 +504,7 @@ const actionToolDefinitions = [
       },
       required: ["name", "addressLine1", "city", "state", "postalCode"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -532,7 +532,7 @@ const actionToolDefinitions = [
       },
       required: ["id", "patch"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -546,7 +546,7 @@ const actionToolDefinitions = [
       },
       required: ["id"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -561,7 +561,7 @@ const actionToolDefinitions = [
       },
       required: ["firstName", "lastName"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -585,7 +585,7 @@ const actionToolDefinitions = [
       },
       required: ["id", "patch"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -599,7 +599,7 @@ const actionToolDefinitions = [
       },
       required: ["id"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -614,7 +614,7 @@ const actionToolDefinitions = [
       },
       required: ["propertyId", "title"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -641,7 +641,7 @@ const actionToolDefinitions = [
       },
       required: ["id", "patch"] as const
     },
-    strict: true as const
+    strict: false as const
   },
   {
     type: "function" as const,
@@ -655,7 +655,7 @@ const actionToolDefinitions = [
       },
       required: ["id"] as const
     },
-    strict: true as const
+    strict: false as const
   }
 ];
 
