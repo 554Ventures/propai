@@ -144,9 +144,34 @@ router.patch(
       return;
     }
 
+    const { label, bedrooms, bathrooms, squareFeet, rent } = req.body as {
+      label?: string;
+      bedrooms?: number | null;
+      bathrooms?: number | null;
+      squareFeet?: number | null;
+      rent?: number | null;
+    };
+
+    if (rent != null && (typeof rent !== "number" || !Number.isFinite(rent) || rent < 0)) {
+      sendError(res, 400, "VALIDATION_ERROR", "Rent must be a non-negative number");
+      return;
+    }
+    if (bedrooms != null && (typeof bedrooms !== "number" || !Number.isInteger(bedrooms) || bedrooms < 0)) {
+      sendError(res, 400, "VALIDATION_ERROR", "Bedrooms must be a non-negative integer");
+      return;
+    }
+    if (bathrooms != null && (typeof bathrooms !== "number" || !Number.isFinite(bathrooms) || bathrooms < 0)) {
+      sendError(res, 400, "VALIDATION_ERROR", "Bathrooms must be a non-negative number");
+      return;
+    }
+    if (squareFeet != null && (typeof squareFeet !== "number" || !Number.isInteger(squareFeet) || squareFeet < 0)) {
+      sendError(res, 400, "VALIDATION_ERROR", "Square feet must be a non-negative integer");
+      return;
+    }
+
     const updated = await prisma.unit.update({
       where: { id: unit.id },
-      data: req.body
+      data: { label, bedrooms, bathrooms, squareFeet, rent }
     });
 
     res.json(updated);

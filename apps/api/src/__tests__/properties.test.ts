@@ -1,3 +1,4 @@
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import app from "../app";
 import prisma from "../lib/prisma";
@@ -95,7 +96,6 @@ describe("properties", () => {
     expect(createRes.status).toBe(201);
     const propertyId = createRes.body.id as string;
 
-    // Create a second user/org
     const other = {
       email: "other-org@example.com",
       password: "Password123!",
@@ -113,10 +113,8 @@ describe("properties", () => {
       .get(`/properties/${propertyId}`)
       .set("Authorization", `Bearer ${token2}`);
 
-    // We return 404 to avoid leaking existence across orgs
     expect(getRes.status).toBe(404);
 
-    // cleanup other user/org
     const otherUser = await prisma.user.findUnique({ where: { email: other.email } });
     if (otherUser) {
       const orgId = otherUser.defaultOrgId;
@@ -157,5 +155,61 @@ describe("properties", () => {
     expect(deleteRes.body).toMatchObject({
       code: "PROPERTY_DELETE_CONFLICT"
     });
+  });
+
+  it("GET /properties includes unitCount and vacancyCount", async () => {
+    const token = await createUserAndToken();
+
+    const propertyRes = await request(app)
+      .post("/properties")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: "Occupancy Property",
+        addressLine1: "99 Oak Ave",
+        city: "Austin",
+        state: "TX",
+        postalCode: "78701"
+      });
+    expect(propertyRes.status).toBe(201);
+    const propertyId = propertyRes.body.id as string;
+
+    const vacantUnitRes = await request(app)
+      .post(`/properties/${propertyId}/units`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ label: "Vacant Unit" });
+    expect(vacantUnitRes.status).toBe(201);
+
+    const occupiedUnitRes = await request(app)
+      .post(`/properties/${propertyId}/units`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ label: "Occupied Unit" });
+    expect(occupiedUnitRes.status).toBe(201);
+
+    const tenantRes = await request(app)
+      .post("/tenants")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ firstName: "Alice", lastName: "Smith", email: "alice.vc@example.com" });
+    expect(tenantRes.status).toBe(201);
+
+    const leaseRes = await request(app)
+      .post(`/properties/${propertyId}/units/${occupiedUnitRes.body.id}/leases`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        tenantId: tenantRes.body.id,
+        startDate: new Date().toISOString(),
+        rent: 1500,
+        status: "ACTIVE"
+      });
+    expect(leaseRes.status).toBe(201);
+
+    const listRes = await request(app)
+      .get("/properties")
+      .set("Authorization", `Bearer ${token}`);
+    expect(listRes.status).toBe(200);
+
+    const prop = (listRes.body as any[]).find((p) => p.id === propertyId);
+    expect(prop).toBeDefined();
+    expect(prop.unitCount).toBe(2);
+    expect(prop.vacancyCount).toBe(1);
   });
 });

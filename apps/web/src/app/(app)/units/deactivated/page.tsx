@@ -33,6 +33,7 @@ export default function DeactivatedUnitsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -59,6 +60,8 @@ export default function DeactivatedUnitsPage() {
     try {
       await apiFetch(`/units/${unitId}/reactivate`, { method: "PATCH", auth: true });
       setUnits((prev) => prev.filter((unit) => unit.id !== unitId));
+      setSuccessMessage("Unit reactivated.");
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err) {
       setError(friendlyError(err, "Failed to reactivate unit."));
     } finally {
@@ -97,6 +100,7 @@ export default function DeactivatedUnitsPage() {
       </div>
 
       {error && <p className="mt-4 text-sm text-rose-300">{error}</p>}
+      {successMessage && <p className="mt-4 text-sm text-emerald-300">{successMessage}</p>}
 
       <div className="mt-6 grid gap-4">
         {loading && (

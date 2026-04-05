@@ -199,6 +199,11 @@ router.patch(
       status?: "DRAFT" | "ACTIVE" | "ENDED";
     };
 
+    if (body.status && !["DRAFT", "ACTIVE", "ENDED"].includes(body.status)) {
+      sendError(res, 400, "VALIDATION_ERROR", "Invalid lease status");
+      return;
+    }
+
     const parsedStart =
       "startDate" in body && body.startDate ? parseDate(body.startDate) : undefined;
     if ("startDate" in body && body.startDate && !parsedStart) {

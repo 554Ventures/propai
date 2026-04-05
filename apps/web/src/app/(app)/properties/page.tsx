@@ -13,6 +13,8 @@ type Property = {
   state: string;
   postalCode: string;
   country: string;
+  unitCount?: number;
+  vacancyCount?: number;
 };
 
 export default function PropertiesPage() {
@@ -68,6 +70,13 @@ export default function PropertiesPage() {
             <p className="mt-2 text-sm text-slate-400">
               {property.addressLine1}, {property.city}, {property.state} {property.postalCode}
             </p>
+            {(property.unitCount !== undefined || property.vacancyCount !== undefined) && (
+              <p className="mt-2 text-xs text-slate-500">
+                {property.unitCount ?? 0} unit{(property.unitCount ?? 0) !== 1 ? "s" : ""}
+                {" · "}
+                {property.vacancyCount ?? 0} vacant
+              </p>
+            )}
           </Link>
         ))}
 

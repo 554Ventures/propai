@@ -112,6 +112,14 @@ export default function PropertyDetailPage() {
 
   const [viewLease, setViewLease] = useState<Lease | null>(null);
 
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [endLeaseUnit, setEndLeaseUnit] = useState<UnitWithLease | null>(null);
+  const [endLeaseLoading, setEndLeaseLoading] = useState(false);
+  const [editUnit, setEditUnit] = useState<UnitWithLease | null>(null);
+  const [editUnitForm, setEditUnitForm] = useState({ label: "", bedrooms: "", bathrooms: "", squareFeet: "", rent: "" });
+  const [editUnitSaving, setEditUnitSaving] = useState(false);
+  const [editUnitError, setEditUnitError] = useState<string | null>(null);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -334,6 +342,82 @@ export default function PropertyDetailPage() {
     }
   };
 
+  const showToast = (msg: string) => {
+    setSuccessMessage(msg);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  const confirmEndLease = async () => {
+    if (!endLeaseUnit?.currentLease) return;
+    setEndLeaseLoading(true);
+    setUnitsError(null);
+    try {
+      await apiFetch(`/leases/${endLeaseUnit.currentLease.id}`, {
+        method: "PATCH",
+        auth: true,
+        body: JSON.stringify({ status: "ENDED" })
+      });
+      setEndLeaseUnit(null);
+      await loadUnits();
+      showToast("Lease ended. Unit is now vacant.");
+    } catch (err) {
+      setUnitsError(friendlyError(err, "Failed to end lease"));
+      setEndLeaseUnit(null);
+    } finally {
+      setEndLeaseLoading(false);
+    }
+  };
+
+  const openEditUnit = (unit: UnitWithLease) => {
+    setEditUnit(unit);
+    setEditUnitForm({
+      label: unit.label,
+      bedrooms: unit.bedrooms != null ? String(unit.bedrooms) : "",
+      bathrooms: unit.bathrooms != null ? String(unit.bathrooms) : "",
+      squareFeet: unit.squareFeet != null ? String(unit.squareFeet) : "",
+      rent: unit.rent != null ? String(unit.rent) : ""
+    });
+    setEditUnitError(null);
+  };
+
+  const submitEditUnit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editUnit) return;
+    setEditUnitSaving(true);
+    setEditUnitError(null);
+
+    const patch: Record<string, unknown> = {};
+    if (editUnitForm.label !== editUnit.label) patch.label = editUnitForm.label;
+    const beds = editUnitForm.bedrooms !== "" ? Number(editUnitForm.bedrooms) : null;
+    if (beds !== (editUnit.bedrooms ?? null)) patch.bedrooms = beds ?? undefined;
+    const baths = editUnitForm.bathrooms !== "" ? Number(editUnitForm.bathrooms) : null;
+    if (baths !== (editUnit.bathrooms ?? null)) patch.bathrooms = baths ?? undefined;
+    const sqft = editUnitForm.squareFeet !== "" ? Number(editUnitForm.squareFeet) : null;
+    if (sqft !== (editUnit.squareFeet ?? null)) patch.squareFeet = sqft ?? undefined;
+    const rent = editUnitForm.rent !== "" ? Number(editUnitForm.rent) : null;
+    if (rent !== (editUnit.rent ?? null)) patch.rent = rent ?? undefined;
+
+    if (Object.keys(patch).length === 0) {
+      setEditUnit(null);
+      return;
+    }
+
+    try {
+      await apiFetch(`/units/${editUnit.id}`, {
+        method: "PATCH",
+        auth: true,
+        body: JSON.stringify(patch)
+      });
+      setEditUnit(null);
+      await loadUnits();
+      showToast("Unit updated.");
+    } catch (err) {
+      setEditUnitError(err instanceof Error ? err.message : "Failed to update unit");
+    } finally {
+      setEditUnitSaving(false);
+    }
+  };
+
   if (!form) {
     return <p className="text-sm text-slate-400">Loading property...</p>;
   }
@@ -439,6 +523,7 @@ export default function PropertyDetailPage() {
         </div>
 
         {unitsError && <p className="mt-4 text-sm text-rose-300">{unitsError}</p>}
+        {successMessage && <p className="mt-4 text-sm text-emerald-300">{successMessage}</p>}
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {unitsLoading &&
@@ -499,6 +584,16 @@ export default function PropertyDetailPage() {
                   ) : (
                     <Button onClick={() => openLeaseFlow(unit)}>Add Tenant</Button>
                   )}
+
+                  {lease?.status === "ACTIVE" && (
+                    <Button variant="destructive" onClick={() => setEndLeaseUnit(unit)}>
+                      End Lease
+                    </Button>
+                  )}
+
+                  <Button variant="secondary" onClick={() => openEditUnit(unit)}>
+                    Edit
+                  </Button>
 
                   <Button
                     variant="secondary"
@@ -826,6 +921,117 @@ export default function PropertyDetailPage() {
               <p>Rent: {formatCurrency(viewLease.rent)}</p>
               <p>Status: {viewLease.status}</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {endLeaseUnit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700/70 bg-slate-900/90 p-6 shadow-2xl">
+            <h4 className="text-lg font-semibold">End Lease</h4>
+            <p className="mt-3 text-sm text-slate-300">
+              End lease for{" "}
+              <span className="font-semibold text-slate-100">
+                {endLeaseUnit.currentLease?.tenant.firstName} {endLeaseUnit.currentLease?.tenant.lastName}
+              </span>
+              ? This cannot be undone without re-creating a lease.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setEndLeaseUnit(null)}
+                disabled={endLeaseLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void confirmEndLease()}
+                disabled={endLeaseLoading}
+              >
+                {endLeaseLoading ? "Ending..." : "End Lease"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editUnit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700/70 bg-slate-900/90 p-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h4 className="text-lg font-semibold">Edit Unit</h4>
+              <button
+                className="text-sm text-slate-400 hover:text-slate-200"
+                onClick={() => setEditUnit(null)}
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={submitEditUnit} className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="text-xs uppercase tracking-wide text-slate-400">Label</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={editUnitForm.label}
+                  onChange={(event) => setEditUnitForm((prev) => ({ ...prev, label: event.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Beds</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={editUnitForm.bedrooms}
+                  onChange={(event) => setEditUnitForm((prev) => ({ ...prev, bedrooms: event.target.value }))}
+                  type="number"
+                  min="0"
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Baths</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={editUnitForm.bathrooms}
+                  onChange={(event) => setEditUnitForm((prev) => ({ ...prev, bathrooms: event.target.value }))}
+                  type="number"
+                  min="0"
+                  step="0.5"
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Sqft</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={editUnitForm.squareFeet}
+                  onChange={(event) => setEditUnitForm((prev) => ({ ...prev, squareFeet: event.target.value }))}
+                  type="number"
+                  min="0"
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Monthly Rent</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={editUnitForm.rent}
+                  onChange={(event) => setEditUnitForm((prev) => ({ ...prev, rent: event.target.value }))}
+                  type="number"
+                  min="0"
+                />
+              </div>
+
+              {editUnitError && <p className="md:col-span-2 text-sm text-rose-300">{editUnitError}</p>}
+
+              <div className="md:col-span-2 flex justify-end gap-2">
+                <Button variant="secondary" type="button" onClick={() => setEditUnit(null)}>
+                  Cancel
+                </Button>
+                <Button disabled={editUnitSaving}>
+                  {editUnitSaving ? "Saving..." : "Save Changes"}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

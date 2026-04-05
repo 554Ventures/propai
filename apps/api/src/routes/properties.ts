@@ -9,10 +9,27 @@ const router: Router = Router();
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const properties = await prisma.property.findMany({
+    const rows = await prisma.property.findMany({
       where: { organizationId: req.auth?.organizationId },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      include: {
+        units: {
+          where: { archivedAt: null },
+          include: {
+            leases: {
+              where: { status: "ACTIVE" },
+              select: { id: true }
+            }
+          }
+        }
+      }
     });
+
+    const properties = rows.map(({ units, ...property }) => ({
+      ...property,
+      unitCount: units.length,
+      vacancyCount: units.filter((u) => u.leases.length === 0).length
+    }));
 
     res.json(properties);
   })
@@ -84,9 +101,21 @@ router.patch(
       return;
     }
 
+    const { name, addressLine1, addressLine2, city, state, postalCode, country, notes } =
+      req.body as {
+        name?: string;
+        addressLine1?: string;
+        addressLine2?: string;
+        city?: string;
+        state?: string;
+        postalCode?: string;
+        country?: string;
+        notes?: string;
+      };
+
     const updated = await prisma.property.update({
       where: { id: property.id },
-      data: req.body
+      data: { name, addressLine1, addressLine2, city, state, postalCode, country, notes }
     });
 
     res.json(updated);
