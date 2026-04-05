@@ -1,15 +1,19 @@
-export default function InsightsPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-semibold">AI Insights</h2>
-      <p className="mt-2 text-sm text-slate-400">
-        Portfolio anomalies, variance explanations, and suggested next actions.
-      </p>
+"use client";
 
-      <div className="mt-6 rounded-2xl border border-dashed border-slate-700/70 bg-slate-950/40 p-6 text-sm text-slate-300">
-        This is a placeholder route. The Assistant pane on the right is live; AI Insights will become a
-        curated feed of saved / scheduled analyses.
-      </div>
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+export default function InsightsRedirectPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    // Redirect to the consolidated Analytics & Insights page
+    router.replace("/analytics");
+  }, [router]);
+
+  return (
+    <div className="flex items-center justify-center min-h-[200px]">
+      <p className="text-sm text-slate-400">Redirecting to Analytics & Insights...</p>
     </div>
   );
 }

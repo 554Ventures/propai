@@ -113,9 +113,16 @@ export default function AnalyticsPage() {
   return (
     <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
       <section className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 className="text-2xl font-semibold">Analytics & Insights</h2>
+            <p className="text-sm text-slate-400">Cash flow forecasts and AI-powered portfolio insights.</p>
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-semibold">Cash Flow Forecast</h2>
+            <h3 className="text-lg font-semibold">Cash Flow Forecast</h3>
             <p className="text-sm text-slate-400">Projected income and expenses per property.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

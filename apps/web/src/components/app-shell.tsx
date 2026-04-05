@@ -29,8 +29,7 @@ const navSections = [
     title: "Operations & Insights",
     items: [
       { href: "/vendors", label: "Vendors" },
-      { href: "/analytics", label: "Analytics" },
-      { href: "/insights", label: "AI Insights" }
+      { href: "/analytics", label: "Analytics" }
     ]
   }
 ];
