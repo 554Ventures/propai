@@ -8,15 +8,31 @@ import { useAuth } from "./auth-provider";
 import ChatPane from "./chat-pane";
 import { CHAT_OPEN_EVENT } from "../lib/chat-events";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/cashflow", label: "Cashflow" },
-  { href: "/units", label: "Units" },
-  { href: "/tenants", label: "Tenants" },
-  { href: "/units/deactivated", label: "Deactivated" },
-  { href: "/maintenance", label: "Maintenance" },
-  { href: "/analytics", label: "Analytics" },
-  { href: "/insights", label: "AI Insights" }
+const navSections = [
+  {
+    title: "Portfolio Management",
+    items: [
+      { href: "/dashboard", label: "Dashboard" },
+      { href: "/properties", label: "Properties" },
+      { href: "/tenants", label: "Tenants" },
+      { href: "/leases", label: "Leases" }
+    ]
+  },
+  {
+    title: "Financial Operations",
+    items: [
+      { href: "/expenses", label: "Expenses" },
+      { href: "/documents", label: "Documents" }
+    ]
+  },
+  {
+    title: "Operations & Insights",
+    items: [
+      { href: "/maintenance", label: "Maintenance" },
+      { href: "/analytics", label: "Analytics" },
+      { href: "/insights", label: "AI Insights" }
+    ]
+  }
 ];
 
 const STORAGE_ASSISTANT_WIDTH = "propai_assistant_pane_width";
@@ -144,22 +160,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <nav className="flex flex-1 flex-col gap-1 px-3 pb-4">
-            {navItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`rounded-xl px-3 py-2 text-sm transition ${
-                    active
-                      ? "bg-cyan-400/10 text-cyan-200"
-                      : "text-slate-300 hover:bg-slate-900/40 hover:text-slate-100"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+            {navSections.map((section) => (
+              <div key={section.title} className="mb-4">
+                <h2 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {section.title}
+                </h2>
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`block rounded-xl px-3 py-2 text-sm transition ${
+                          active
+                            ? "bg-cyan-400/10 text-cyan-200"
+                            : "text-slate-300 hover:bg-slate-900/40 hover:text-slate-100"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
 
           <div className="border-t border-slate-800/60 px-4 py-4">

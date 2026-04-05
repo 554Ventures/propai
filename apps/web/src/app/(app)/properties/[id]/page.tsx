@@ -134,9 +134,10 @@ export default function PropertyDetailPage() {
   const [editUnitError, setEditUnitError] = useState<string | null>(null);
   
   const [editLease, setEditLease] = useState<Lease | null>(null);
-  const [editLeaseForm, setEditLeaseForm] = useState({ rent: "", startDate: "", endDate: "", status: "ACTIVE" });
+  const [editLeaseForm, setEditLeaseForm] = useState({ rent: "", startDate: "", endDate: "", status: "ACTIVE", tenantId: "", isMonthToMonth: false });
   const [editLeaseSaving, setEditLeaseSaving] = useState(false);
   const [editLeaseError, setEditLeaseError] = useState<string | null>(null);
+  const [editLeaseFieldErrors, setEditLeaseFieldErrors] = useState<Record<string, string>>({});
 
   const [maintenance, setMaintenance] = useState<MaintenanceRequest[]>([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
@@ -487,39 +488,78 @@ export default function PropertyDetailPage() {
     }
   };
 
-  const openEditLease = (lease: Lease) => {
+  const openEditLease = async (lease: Lease) => {
     setEditLease(lease);
     setEditLeaseForm({
       rent: String(lease.rent),
       startDate: lease.startDate,
       endDate: lease.endDate ?? "",
-      status: lease.status
+      status: lease.status,
+      tenantId: lease.tenant.id,
+      isMonthToMonth: !lease.endDate
     });
     setEditLeaseError(null);
+    setEditLeaseFieldErrors({});
+    await loadTenants();
   };
 
-  const submitEditLease = async (event: FormEvent) => {
+  const submitEditLease = async (event: FormEvent, retryCount = 0) => {
     event.preventDefault();
     if (!editLease) return;
     setEditLeaseSaving(true);
     setEditLeaseError(null);
+    setEditLeaseFieldErrors({});
 
+    const fieldErrors: Record<string, string> = {};
     const patch: Record<string, unknown> = {};
     const newRent = Number(editLeaseForm.rent);
     const newStatus = editLeaseForm.status as "DRAFT" | "ACTIVE" | "ENDED";
+    const newTenantId = editLeaseForm.tenantId;
     
-    if (newRent !== editLease.rent) patch.rent = newRent;
-    if (editLeaseForm.startDate !== editLease.startDate) patch.startDate = editLeaseForm.startDate;
-    if (editLeaseForm.endDate !== (editLease.endDate ?? "")) {
-      patch.endDate = editLeaseForm.endDate || null;
+    // Field validation
+    if (!editLeaseForm.rent || newRent <= 0) {
+      fieldErrors.rent = "Rent must be a positive number";
     }
-    if (newStatus !== editLease.status) patch.status = newStatus;
-
-    // Validation
-    if (newRent <= 0) {
-      setEditLeaseError("Rent must be a positive number");
+    
+    if (!editLeaseForm.startDate) {
+      fieldErrors.startDate = "Start date is required";
+    } else {
+      // Past date validation - startDate cannot be more than 30 days in the past
+      const startDate = new Date(editLeaseForm.startDate);
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      // Allow current lease's existing startDate (grandfathering)
+      if (startDate < thirtyDaysAgo && editLeaseForm.startDate !== editLease.startDate) {
+        fieldErrors.startDate = "Start date cannot be more than 30 days in the past";
+      }
+    }
+    
+    if (!newTenantId) {
+      fieldErrors.tenantId = "Please select a tenant";
+    }
+    
+    // Check month-to-month logic
+    if (editLeaseForm.isMonthToMonth) {
+      patch.endDate = null;
+    } else if (editLeaseForm.endDate) {
+      patch.endDate = editLeaseForm.endDate;
+    }
+    
+    if (Object.keys(fieldErrors).length > 0) {
+      setEditLeaseFieldErrors(fieldErrors);
       setEditLeaseSaving(false);
       return;
+    }
+
+    // Build patches
+    if (newRent !== editLease.rent) patch.rent = newRent;
+    if (editLeaseForm.startDate !== editLease.startDate) patch.startDate = editLeaseForm.startDate;
+    if (newTenantId !== editLease.tenant.id) patch.tenantId = newTenantId;
+    if (newStatus !== editLease.status) patch.status = newStatus;
+    
+    if (!editLeaseForm.isMonthToMonth && editLeaseForm.endDate !== (editLease.endDate ?? "")) {
+      patch.endDate = editLeaseForm.endDate || null;
     }
 
     // Check for significant rent increase (>10%)
@@ -546,8 +586,27 @@ export default function PropertyDetailPage() {
       setEditLease(null);
       await loadUnits();
       showToast("Lease updated.");
-    } catch (err) {
-      setEditLeaseError(err instanceof Error ? err.message : "Failed to update lease");
+    } catch (err: unknown) {
+      const error = err as { message?: string; code?: string; details?: unknown };
+      
+      // Handle specific API errors with inline field errors
+      if (error.code === "LEASE_DATE_OVERLAP") {
+        const details = error.details as { message?: string; overlappingDates?: string } | undefined;
+        setEditLeaseFieldErrors({
+          startDate: details?.message || "Date conflicts with existing lease",
+          endDate: details?.overlappingDates ? `Conflicts with lease from ${details.overlappingDates}` : ""
+        });
+      } else if (error.code === "TENANT_NOT_FOUND") {
+        setEditLeaseFieldErrors({
+          tenantId: "Selected tenant not found or not accessible in your organization"
+        });
+      } else if (error.message?.includes("network") && retryCount < 2) {
+        // Retry mechanism for network failures
+        setTimeout(() => submitEditLease(event, retryCount + 1), 1000);
+        return;
+      } else {
+        setEditLeaseError(error.message || "Failed to update lease");
+      }
     } finally {
       setEditLeaseSaving(false);
     }
@@ -1490,7 +1549,7 @@ export default function PropertyDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
           <div className="w-full max-w-lg rounded-2xl border border-slate-700/70 bg-slate-900/90 p-6 shadow-2xl">
             <div className="flex items-center justify-between">
-              <h4 className="text-lg font-semibold">Edit Lease</h4>
+              <h4 className="text-lg font-semibold">Edit Lease #{editLease.id}</h4>
               <button
                 className="text-sm text-slate-400 hover:text-slate-200"
                 onClick={() => setEditLease(null)}
@@ -1499,37 +1558,95 @@ export default function PropertyDetailPage() {
               </button>
             </div>
 
-            <form onSubmit={submitEditLease} className="mt-4 grid gap-4">
+            <form onSubmit={(e) => submitEditLease(e)} className="mt-4 grid gap-4">
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Tenant</label>
+                <select
+                  className={`mt-2 w-full rounded-xl border ${editLeaseFieldErrors.tenantId ? 'border-rose-500' : 'border-slate-700'} bg-slate-950/60 px-4 py-3 text-slate-100`}
+                  value={editLeaseForm.tenantId}
+                  onChange={(event) => {
+                    setEditLeaseForm((prev) => ({ ...prev, tenantId: event.target.value }));
+                    setEditLeaseFieldErrors((prev) => ({ ...prev, tenantId: "" }));
+                  }}
+                  disabled={tenantsLoading}
+                  required
+                >
+                  <option value="">Select tenant...</option>
+                  {tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.firstName} {tenant.lastName} {tenant.email ? `(${tenant.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {editLeaseFieldErrors.tenantId && <p className="mt-1 text-xs text-rose-300">{editLeaseFieldErrors.tenantId}</p>}
+              </div>
+              
               <div>
                 <label className="text-xs uppercase tracking-wide text-slate-400">Monthly Rent</label>
                 <input
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  className={`mt-2 w-full rounded-xl border ${editLeaseFieldErrors.rent ? 'border-rose-500' : 'border-slate-700'} bg-slate-950/60 px-4 py-3 text-slate-100`}
                   value={editLeaseForm.rent}
-                  onChange={(event) => setEditLeaseForm((prev) => ({ ...prev, rent: event.target.value }))}
+                  onChange={(event) => {
+                    setEditLeaseForm((prev) => ({ ...prev, rent: event.target.value }));
+                    setEditLeaseFieldErrors((prev) => ({ ...prev, rent: "" }));
+                  }}
                   type="number"
                   min="0"
                   required
                 />
+                {editLeaseFieldErrors.rent && <p className="mt-1 text-xs text-rose-300">{editLeaseFieldErrors.rent}</p>}
               </div>
+              
               <div>
                 <label className="text-xs uppercase tracking-wide text-slate-400">Start Date</label>
                 <input
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  className={`mt-2 w-full rounded-xl border ${editLeaseFieldErrors.startDate ? 'border-rose-500' : 'border-slate-700'} bg-slate-950/60 px-4 py-3 text-slate-100`}
                   value={editLeaseForm.startDate}
-                  onChange={(event) => setEditLeaseForm((prev) => ({ ...prev, startDate: event.target.value }))}
+                  onChange={(event) => {
+                    setEditLeaseForm((prev) => ({ ...prev, startDate: event.target.value }));
+                    setEditLeaseFieldErrors((prev) => ({ ...prev, startDate: "" }));
+                  }}
                   type="date"
                   required
                 />
+                {editLeaseFieldErrors.startDate && <p className="mt-1 text-xs text-rose-300">{editLeaseFieldErrors.startDate}</p>}
               </div>
+              
               <div>
-                <label className="text-xs uppercase tracking-wide text-slate-400">End Date (Optional)</label>
+                <div className="flex items-center gap-3 mb-2">
+                  <label className="text-xs uppercase tracking-wide text-slate-400">End Date</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={editLeaseForm.isMonthToMonth}
+                      onChange={(event) => {
+                        const isMonthToMonth = event.target.checked;
+                        setEditLeaseForm((prev) => ({ 
+                          ...prev, 
+                          isMonthToMonth,
+                          endDate: isMonthToMonth ? "" : prev.endDate 
+                        }));
+                        setEditLeaseFieldErrors((prev) => ({ ...prev, endDate: "" }));
+                      }}
+                      className="w-4 h-4 text-cyan-500 bg-slate-950 border-slate-700 focus:ring-cyan-500"
+                    />
+                    Month-to-Month
+                  </label>
+                </div>
                 <input
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  className={`mt-2 w-full rounded-xl border ${editLeaseFieldErrors.endDate ? 'border-rose-500' : 'border-slate-700'} bg-slate-950/60 px-4 py-3 text-slate-100`}
                   value={editLeaseForm.endDate}
-                  onChange={(event) => setEditLeaseForm((prev) => ({ ...prev, endDate: event.target.value }))}
+                  onChange={(event) => {
+                    setEditLeaseForm((prev) => ({ ...prev, endDate: event.target.value }));
+                    setEditLeaseFieldErrors((prev) => ({ ...prev, endDate: "" }));
+                  }}
                   type="date"
+                  disabled={editLeaseForm.isMonthToMonth}
+                  placeholder={editLeaseForm.isMonthToMonth ? "Month-to-month lease" : ""}
                 />
+                {editLeaseFieldErrors.endDate && <p className="mt-1 text-xs text-rose-300">{editLeaseFieldErrors.endDate}</p>}
               </div>
+              
               <div>
                 <label className="text-xs uppercase tracking-wide text-slate-400">Status</label>
                 <select
@@ -1539,11 +1656,15 @@ export default function PropertyDetailPage() {
                 >
                   <option value="DRAFT">Draft</option>
                   <option value="ACTIVE">Active</option>
-                  <option value="ENDED">Ended</option>
+                  {/* ENDED status removed per PM specification - only valid transitions */}
                 </select>
               </div>
 
-              {editLeaseError && <p className="text-sm text-rose-300">{editLeaseError}</p>}
+              {editLeaseError && (
+                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                  <p className="text-sm text-rose-300">{editLeaseError}</p>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2">
                 <Button variant="secondary" type="button" onClick={() => setEditLease(null)}>
@@ -1554,6 +1675,13 @@ export default function PropertyDetailPage() {
                 </Button>
               </div>
             </form>
+            
+            {/* Enhanced footer with last modified info */}
+            <div className="mt-4 pt-4 border-t border-slate-700/50 text-xs text-slate-400">
+              <p>Lease ID: {editLease.id}</p>
+              <p>Current tenant: {editLease.tenant.firstName} {editLease.tenant.lastName}</p>
+              {/* Note: Last modified timestamp would require API enhancement to track modification history */}
+            </div>
           </div>
         </div>
       )}
