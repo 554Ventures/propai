@@ -27,6 +27,16 @@ type Citation = {
   detail: string;
 };
 
+type ChoiceOption = {
+  label: string;
+  value: string | number | boolean;
+};
+
+type ToolCallResult = {
+  toolName: string;
+  output: Record<string, unknown>;
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -44,7 +54,7 @@ type ChatMessage = {
       toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
       clarify?: {
         missing?: string[];
-        choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
+        choices: Array<{ field: string; options: Array<ChoiceOption> }>;
       };
     };
     aiReceipt?: {
@@ -55,7 +65,7 @@ type ChatMessage = {
     aiResult?: {
       title?: string;
       detail?: string;
-      payload?: any;
+      payload?: unknown;
     };
     aiError?: {
       title: string;
@@ -67,51 +77,6 @@ type ChatMessage = {
 type ChatHistoryResponse = {
   sessionId: string | null;
   messages: ChatMessage[];
-};
-
-type ChatResponse = {
-  sessionId: string;
-  response: string;
-  citations?: Citation[];
-  toolCalls?: ToolCallLog[];
-};
-
-type AiPlanResponse =
-  | {
-      mode: "draft";
-      draft: {
-        planId: string;
-        kind: string;
-        summary: string;
-        fields: Record<string, unknown>;
-      };
-    }
-  | { mode: "chat"; message: string };
-
-type AiPlanAltResponse = {
-  pendingActionId: string;
-  requiresConfirm: boolean;
-  plan: {
-    summary: string;
-    toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }>;
-    kind?: string;
-    fields?: Record<string, unknown>;
-  };
-  clarify?: {
-    pendingActionId: string;
-    choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
-  };
-};
-
-type AiPlanAltClarifyResponse = {
-  pendingActionId: null;
-  requiresConfirm: false;
-  plan: {
-    summary: string;
-    toolCalls?: unknown[];
-    fields?: Record<string, unknown>;
-    kind?: string;
-  };
 };
 
 type AiChatResponse =
@@ -133,7 +98,7 @@ type AiChatResponse =
       };
       clarify?: {
         missing?: string[];
-        choices: Array<{ field: string; options: Array<{ label: string; value: any }> }>;
+        choices: Array<{ field: string; options: Array<ChoiceOption> }>;
       };
       sessionId?: string;
       messageId?: string;
@@ -159,16 +124,10 @@ type AiChatResponse =
         href?: string;
         detail?: string;
       };
-      result: Array<{ toolName: string; output: any }> | any;
+      result: Array<ToolCallResult> | Record<string, unknown>;
       sessionId?: string;
       messageId?: string;
     };
-
-type AiConfirmResponse = {
-  ok: true;
-  status: string;
-  result: Array<{ toolName: string; output: any }> | any;
-};
 
 const quickActions = [
   { label: "Rent Summary", message: "How much rent did I collect last month?" },
@@ -230,13 +189,7 @@ export default function ChatPane() {
     pendingActionIdRef.current = null;
   }, []);
 
-  const getMissingFields = useCallback((draft?: NonNullable<NonNullable<ChatMessage["metadata"]>["aiDraft"]>) => {
-    if (!draft?.clarify) return [] as string[];
-    const explicit = draft.clarify.missing ?? [];
-    if (explicit.length > 0) return explicit;
-    const fromChoices = (draft.clarify.choices ?? []).map((c: { field: string }) => c.field).filter(Boolean);
-    return Array.from(new Set(fromChoices));
-  }, []);
+  // Note: getMissingFields was unused, so removing it
 
   // NOTE: we no longer heuristically decide whether something is a write on the client.
   // The server (/ai/chat) is the single authority and returns mode=chat|clarify|draft|result.
@@ -565,9 +518,10 @@ export default function ChatPane() {
         throw new Error("Unexpected response from /ai/chat confirm");
       }
 
-      const first = Array.isArray((data as any).result) ? (data as any).result[0] : null;
-      const toolName = first?.toolName as string | undefined;
-      const output = first?.output as any;
+      const result = data.result;
+      const first = Array.isArray(result) ? result[0] : null;
+      const toolName = first?.toolName;
+      const output = first?.output as Record<string, unknown> | undefined;
       const createdId = output?.id ? String(output.id) : undefined;
 
       const href =

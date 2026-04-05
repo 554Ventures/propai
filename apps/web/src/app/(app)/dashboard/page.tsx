@@ -227,7 +227,7 @@ const generateBusinessInsights = (alerts: Alerts | null, metrics: Metrics | null
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [alerts, setAlerts] = useState<Alerts | null>(null);
-  const [insights, setInsights] = useState<Insight[]>([]);
+  const [_insights, setInsights] = useState<Insight[]>([]);
   const [businessInsights, setBusinessInsights] = useState<BusinessInsight[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -266,7 +266,7 @@ export default function DashboardPage() {
   }, [metrics]);
 
   // Calculate simple trend indicators for metrics (mock logic for Week 1)
-  const getTrendIndicator = (type: string) => {
+  const getTrendIndicator = (_type: string) => {
     const mock = Math.random();
     if (mock > 0.6) return { icon: "↗", color: "text-emerald-400", label: "up" };
     if (mock > 0.4) return { icon: "↔", color: "text-slate-400", label: "same" };
@@ -619,7 +619,7 @@ export default function DashboardPage() {
                           key={action.href}
                           asChild
                           size="xs"
-                          variant={index === 0 ? "default" : action.variant as any}
+                          variant={index === 0 ? "default" : action.variant}
                           className="text-[10px] h-5"
                         >
                           <Link href={action.href}>{action.label}</Link>

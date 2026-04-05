@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import supertest from "supertest";
 import app from "../app.js";
-import { clearDatabase, createTestUser } from "../../test/test-helpers.js";
+import { clearDatabase, createTestUser } from "../../test/test-helpers";
 
 const request = supertest(app);
 

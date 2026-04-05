@@ -12,12 +12,9 @@ export default function VendorsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<ServiceCategory | "all">("all");
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [_successMessage, _setSuccessMessage] = useState<string | null>(null);
 
-  const showToast = (message: string) => {
-    setSuccessMessage(message);
-    setTimeout(() => setSuccessMessage(null), 3000);
-  };
+  // Note: showToast was unused, removing it
 
   const filteredVendors = vendors.filter(vendor => {
     const statusMatch = showInactive ? !vendor.isActive : vendor.isActive;
@@ -97,7 +94,7 @@ export default function VendorsPage() {
       </div>
 
       {error && <p className="mt-4 text-sm text-rose-300">{error}</p>}
-      {successMessage && <p className="mt-4 text-sm text-emerald-300">{successMessage}</p>}
+      {_successMessage && <p className="mt-4 text-sm text-emerald-300">{_successMessage}</p>}
 
       <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {loading &&
