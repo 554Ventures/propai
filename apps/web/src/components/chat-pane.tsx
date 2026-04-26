@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import { History, MessageSquarePlus, RotateCcw, Trash2, X } from "lucide-react";
 import { API_URL, apiFetch } from "../lib/api";
 import { getStoredToken } from "../lib/auth";
 import { Button } from "./ui/button";
@@ -143,12 +144,6 @@ type AiChatResponse =
       messageId?: string;
     };
 
-const quickActions = [
-  { label: "Rent Summary", message: "How much rent did I collect last month?" },
-  { label: "Properties", message: "List my properties." },
-  { label: "Cashflow", message: "Show me expenses for Oak Street last month." }
-];
-
 const formatTime = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -162,6 +157,31 @@ const savedReceiptDetail = (toolName?: string) => {
   if (toolName === "createMaintenanceRequest") return "Maintenance request created successfully.";
   return "Your changes were saved successfully.";
 };
+
+function HeaderIconButton(props: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      disabled={props.disabled}
+      title={props.label}
+      aria-label={props.label}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-foreground transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        props.danger
+          ? "border-destructive/40 bg-destructive/10 text-destructive hover:border-destructive/70"
+          : "border-border bg-muted hover:border-primary/70 hover:bg-accent hover:text-accent-foreground"
+      }`}
+    >
+      {props.children}
+    </button>
+  );
+}
 
 export default function ChatPane() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -438,14 +458,6 @@ export default function ChatPane() {
     [focusInput, loading, refreshSessions]
   );
 
-  const sendAsNewAction = useCallback(
-    async (text: string) => {
-      clearPendingAction();
-      await sendMessage(text);
-    },
-    [clearPendingAction, sendMessage]
-  );
-
   const startNewChat = useCallback(async () => {
     if (loading) return;
     setError(null);
@@ -658,50 +670,36 @@ export default function ChatPane() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-border px-4 py-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex items-center gap-1.5">
+            <HeaderIconButton
+              label={sessionsOpen ? "Hide chat history" : "Show chat history"}
               onClick={() => {
                 setSessionsOpen((prev) => !prev);
                 if (!sessionsOpen) void refreshSessions();
               }}
-              className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-foreground transition hover:border-primary/70"
               disabled={loading}
-              title="History"
             >
-              History
-            </button>
+              <History className="h-4 w-4" aria-hidden="true" />
+            </HeaderIconButton>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={startNewChat} disabled={loading}>
-              New chat
-            </Button>
-            <Button variant="secondary" onClick={clearChat} disabled={loading || messages.length === 0}>
-              Clear chat
-            </Button>
+          <div className="flex items-center gap-1.5">
+            <HeaderIconButton label="New chat" onClick={startNewChat} disabled={loading}>
+              <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+            </HeaderIconButton>
+            <HeaderIconButton label="Clear chat" onClick={clearChat} disabled={loading || messages.length === 0}>
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </HeaderIconButton>
+            {isDraftPending ? (
+              <HeaderIconButton
+                label="Cancel draft and start new chat"
+                onClick={() => void startOver()}
+                disabled={loading}
+                danger
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              </HeaderIconButton>
+            ) : null}
           </div>
-        </div>
-
-        <div className="mt-2 flex flex-wrap gap-2">
-          {quickActions.map((action) => (
-            <button
-              key={action.label}
-              onClick={() => sendAsNewAction(action.message)}
-              className="rounded-full border border-border bg-secondary px-3 py-1 text-xs text-secondary-foreground transition hover:border-primary/70"
-              disabled={loading}
-            >
-              {action.label}
-            </button>
-          ))}
-          {isDraftPending ? (
-            <button
-              onClick={() => void startOver()}
-              className="rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-semibold text-destructive transition hover:border-destructive/60"
-              disabled={loading}
-              title="Cancel the pending draft and start a new chat"
-            >
-              Start over
-            </button>
-          ) : null}
         </div>
       </div>
 
@@ -710,10 +708,12 @@ export default function ChatPane() {
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Chats</p>
             <button
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
               onClick={() => setSessionsOpen(false)}
+              title="Close history"
+              aria-label="Close history"
             >
-              Close
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
           <div className="mt-2 max-h-48 overflow-y-auto">
