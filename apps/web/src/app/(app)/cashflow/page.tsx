@@ -8,6 +8,29 @@ import { DataCard } from "@/components/ui/molecules/data-card";
 import { FormField } from "@/components/ui/molecules/form-field";
 import { Input } from "@/components/ui/atoms/input";
 
+type PlaidLinkMetadata = {
+  institution?: { name?: string | null; institution_id?: string | null } | null;
+};
+
+type PlaidLinkHandler = {
+  open: () => void;
+  destroy: () => void;
+};
+
+type PlaidCreateConfig = {
+  token: string;
+  onSuccess: (publicToken: string, metadata: PlaidLinkMetadata) => void;
+  onExit?: (error: { error_message?: string | null } | null, metadata: PlaidLinkMetadata) => void;
+};
+
+declare global {
+  interface Window {
+    Plaid?: {
+      create: (config: PlaidCreateConfig) => PlaidLinkHandler;
+    };
+  }
+}
+
 type Property = {
   id: string;
   name: string;
@@ -24,6 +47,33 @@ type CashflowTransaction = {
   notes?: string | null;
   propertyId?: string | null;
   property?: { id: string; name: string } | null;
+};
+
+type PlaidAccount = {
+  id: string;
+  plaidItemId: string;
+  name: string;
+  mask?: string | null;
+  type?: string | null;
+  subtype?: string | null;
+  status: string;
+  institutionName?: string | null;
+  lastSyncedAt?: string | null;
+  lastSyncError?: string | null;
+};
+
+type PlaidReviewTransaction = {
+  id: string;
+  name: string;
+  merchantName?: string | null;
+  amount: number;
+  date: string;
+  suggestedType: CashflowType;
+  suggestedCategory?: string | null;
+  categoryConfidence?: number | null;
+  reviewReason?: string | null;
+  accountName: string;
+  accountMask?: string | null;
 };
 
 type TabKey = "all" | "income" | "expenses";
@@ -50,10 +100,41 @@ function friendlyError(err: unknown, fallback: string) {
   return fallback;
 }
 
+function loadPlaidScript() {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Plaid Link can only run in the browser."));
+  }
+
+  if (window.Plaid) {
+    return Promise.resolve();
+  }
+
+  const existingScript = document.getElementById("plaid-link-script") as HTMLScriptElement | null;
+  if (existingScript) {
+    return new Promise<void>((resolve, reject) => {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Plaid Link failed to load.")), { once: true });
+    });
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.id = "plaid-link-script";
+    script.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Plaid Link failed to load."));
+    document.head.appendChild(script);
+  });
+}
+
 export default function CashflowPage() {
   const [tab, setTab] = useState<TabKey>("all");
   const [transactions, setTransactions] = useState<CashflowTransaction[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [plaidAccounts, setPlaidAccounts] = useState<PlaidAccount[]>([]);
+  const [reviewTransactions, setReviewTransactions] = useState<PlaidReviewTransaction[]>([]);
+  const [reviewEdits, setReviewEdits] = useState<Record<string, { category: string; propertyId: string }>>({});
 
   const mtd = useMemo(() => getMonthToDateRange(), []);
   const [from, setFrom] = useState(mtd.from);
@@ -63,6 +144,8 @@ export default function CashflowPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [plaidStatus, setPlaidStatus] = useState<string | null>(null);
+  const [plaidConnecting, setPlaidConnecting] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
@@ -89,8 +172,14 @@ export default function CashflowPage() {
         apiFetch<CashflowTransaction[]>(`/cashflow/transactions?${params.toString()}`, { auth: true }),
         apiFetch<Property[]>("/properties", { auth: true }).catch(() => [])
       ]);
+      const [accounts, review] = await Promise.all([
+        apiFetch<PlaidAccount[]>("/api/plaid/accounts", { auth: true }).catch(() => []),
+        apiFetch<PlaidReviewTransaction[]>("/api/plaid/transactions/review", { auth: true }).catch(() => [])
+      ]);
       setTransactions(tx);
       setProperties(props);
+      setPlaidAccounts(accounts);
+      setReviewTransactions(review);
     } catch (err) {
       setError(friendlyError(err, "We couldn't load cashflow transactions."));
     } finally {
@@ -168,6 +257,122 @@ export default function CashflowPage() {
     }
   };
 
+  const startPlaidConnection = async () => {
+    if (plaidConnecting) return;
+
+    setPlaidConnecting(true);
+    setPlaidStatus(null);
+    setError(null);
+    try {
+      const { linkToken } = await apiFetch<{ linkToken: string }>("/api/plaid/link-token", { method: "POST", auth: true });
+      await loadPlaidScript();
+
+      if (!window.Plaid) {
+        throw new Error("Plaid Link is unavailable.");
+      }
+
+      setPlaidStatus("Opening secure bank connection...");
+      const handler = window.Plaid.create({
+        token: linkToken,
+        onSuccess: (publicToken) => {
+          void (async () => {
+            setPlaidStatus("Connecting bank account...");
+            try {
+              const result = await apiFetch<{ itemId: string; accountsImported: number }>("/api/plaid/exchange-public-token", {
+                method: "POST",
+                auth: true,
+                body: JSON.stringify({ publicToken })
+              });
+              setPlaidStatus(`Connected ${result.accountsImported} account${result.accountsImported === 1 ? "" : "s"}. Syncing transactions...`);
+              await apiFetch<{ imported: number; modified: number; removed: number }>(`/api/plaid/items/${result.itemId}/sync`, {
+                method: "POST",
+                auth: true
+              });
+              setPlaidStatus("Bank account connected and transactions are ready for review.");
+              await load();
+            } catch (err) {
+              setError(friendlyError(err, "We couldn't finish connecting that bank account."));
+            } finally {
+              setPlaidConnecting(false);
+              handler.destroy();
+            }
+          })();
+        },
+        onExit: (plaidError) => {
+          if (plaidError?.error_message) {
+            setError(plaidError.error_message);
+          } else {
+            setPlaidStatus(null);
+          }
+          setPlaidConnecting(false);
+          handler.destroy();
+        }
+      });
+
+      handler.open();
+    } catch (err) {
+      setError(friendlyError(err, "We couldn't start Plaid Link."));
+      setPlaidConnecting(false);
+    }
+  };
+
+  const syncPlaidItem = async (itemId: string) => {
+    setPlaidStatus(null);
+    setError(null);
+    try {
+      const result = await apiFetch<{ imported: number; modified: number; removed: number }>(`/api/plaid/items/${itemId}/sync`, {
+        method: "POST",
+        auth: true
+      });
+      setPlaidStatus(`Synced ${result.imported + result.modified} transaction${result.imported + result.modified === 1 ? "" : "s"}.`);
+      await load();
+    } catch (err) {
+      setError(friendlyError(err, "We couldn't sync that bank connection."));
+    }
+  };
+
+  const updateReviewEdit = (id: string, key: "category" | "propertyId", value: string) => {
+    setReviewEdits((prev) => ({
+      ...prev,
+      [id]: { category: prev[id]?.category ?? "", propertyId: prev[id]?.propertyId ?? "", [key]: value }
+    }));
+  };
+
+  const approveReviewTransaction = async (transaction: PlaidReviewTransaction) => {
+    const edit = reviewEdits[transaction.id];
+    const category = edit?.category || transaction.suggestedCategory || "";
+    if (!category.trim()) {
+      setError("Choose a category before approving this transaction.");
+      return;
+    }
+
+    setError(null);
+    try {
+      await apiFetch(`/api/plaid/transactions/${transaction.id}/review`, {
+        method: "PATCH",
+        auth: true,
+        body: JSON.stringify({ category, propertyId: edit?.propertyId || null })
+      });
+      await load();
+    } catch (err) {
+      setError(friendlyError(err, "We couldn't approve that imported transaction."));
+    }
+  };
+
+  const excludeReviewTransaction = async (transactionId: string) => {
+    setError(null);
+    try {
+      await apiFetch(`/api/plaid/transactions/${transactionId}/review`, {
+        method: "PATCH",
+        auth: true,
+        body: JSON.stringify({ exclude: true })
+      });
+      await load();
+    } catch (err) {
+      setError(friendlyError(err, "We couldn't exclude that imported transaction."));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -184,6 +389,90 @@ export default function CashflowPage() {
           </Button>
         }
       />
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-card-foreground">Bank connections</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Connected accounts stream imported cashflow for review.</p>
+            </div>
+            <Button type="button" variant="secondary" onClick={startPlaidConnection} disabled={plaidConnecting}>
+              {plaidConnecting ? "Connecting..." : "Connect bank"}
+            </Button>
+          </div>
+          {plaidStatus && <div className="mt-3 rounded-md border border-primary/20 bg-primary/10 px-3 py-2 text-xs text-foreground">{plaidStatus}</div>}
+          <div className="mt-4 divide-y divide-border">
+            {plaidAccounts.length === 0 ? (
+              <div className="py-3 text-sm text-muted-foreground">No bank accounts connected.</div>
+            ) : (
+              plaidAccounts.map((account) => (
+                <div key={account.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-card-foreground">{account.name}{account.mask ? ` • ${account.mask}` : ""}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {account.institutionName ?? account.type ?? "Bank account"} • {account.status.toLowerCase().replaceAll("_", " ")}
+                      {account.lastSyncedAt ? ` • Synced ${new Date(account.lastSyncedAt).toLocaleString()}` : ""}
+                    </div>
+                    {account.lastSyncError && <div className="mt-1 text-xs text-destructive">{account.lastSyncError}</div>}
+                  </div>
+                  <Button type="button" variant="secondary" onClick={() => syncPlaidItem(account.plaidItemId)}>Sync</Button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-card-foreground">Needs review</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Assign category and property before approval.</p>
+            </div>
+            <div className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{reviewTransactions.length}</div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {reviewTransactions.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No imported transactions need review.</div>
+            ) : (
+              reviewTransactions.slice(0, 3).map((transaction) => {
+                const edit = reviewEdits[transaction.id];
+                const category = edit?.category ?? transaction.suggestedCategory ?? "";
+                return (
+                  <div key={transaction.id} className="rounded-md border border-border p-3">
+                    <div className="flex flex-wrap justify-between gap-2 text-sm">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-card-foreground">{transaction.merchantName ?? transaction.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {new Date(transaction.date).toLocaleDateString()} • {transaction.accountName}{transaction.accountMask ? ` • ${transaction.accountMask}` : ""}
+                        </div>
+                      </div>
+                      <div className={transaction.suggestedType === "INCOME" ? "text-green-500" : "text-red-500"}>{formatMoney(Math.abs(Number(transaction.amount)))}</div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <Input value={category} onChange={(e) => updateReviewEdit(transaction.id, "category", e.target.value)} placeholder="Category" />
+                      <select
+                        className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        value={edit?.propertyId ?? ""}
+                        onChange={(e) => updateReviewEdit(transaction.id, "propertyId", e.target.value)}
+                      >
+                        <option value="">No property</option>
+                        {properties.map((property) => (
+                          <option key={property.id} value={property.id}>{property.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button type="button" variant="secondary" onClick={() => excludeReviewTransaction(transaction.id)}>Exclude</Button>
+                      <Button type="button" onClick={() => approveReviewTransaction(transaction)}>Approve</Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className="flex flex-wrap items-center gap-2">
         {(
