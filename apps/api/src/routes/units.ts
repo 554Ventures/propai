@@ -132,6 +132,168 @@ router.get(
   })
 );
 
+router.get(
+  "/units/:id/cashflow",
+  asyncHandler(async (req, res) => {
+    const timeframe = (req.query.timeframe as string | undefined) ?? "90d";
+    const unit = await prisma.unit.findFirst({
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
+    });
+
+    if (!unit) {
+      sendError(res, 404, "UNIT_NOT_FOUND", "Unit not found");
+      return;
+    }
+
+    const now = new Date();
+    let startDate: Date | null = null;
+    if (timeframe === "30d") {
+      startDate = new Date(now);
+      startDate.setDate(now.getDate() - 30);
+    } else if (timeframe === "12m") {
+      startDate = new Date(now);
+      startDate.setMonth(now.getMonth() - 12);
+    } else if (timeframe === "all") {
+      startDate = null;
+    } else {
+      startDate = new Date(now);
+      startDate.setDate(now.getDate() - 90);
+    }
+
+    const payments = await prisma.payment.findMany({
+      where: {
+        organizationId: req.auth?.organizationId,
+        ...(startDate ? { dueDate: { gte: startDate } } : {}),
+        lease: {
+          unitId: unit.id
+        }
+      },
+      orderBy: { dueDate: "desc" },
+      take: 12,
+      include: {
+        lease: {
+          select: { id: true, tenant: { select: { firstName: true, lastName: true } } }
+        }
+      }
+    });
+
+    const summary = payments.reduce(
+      (acc, payment) => {
+        if (payment.status === "PAID") {
+          acc.collected += payment.amount;
+        }
+        if (payment.status === "LATE" || payment.status === "PENDING") {
+          acc.outstanding += payment.amount;
+        }
+        return acc;
+      },
+      { collected: 0, outstanding: 0 }
+    );
+
+    res.json({
+      unitId: unit.id,
+      timeframe,
+      summary,
+      recentPayments: payments.map((payment) => ({
+        id: payment.id,
+        amount: payment.amount,
+        status: payment.status,
+        dueDate: payment.dueDate,
+        paidDate: payment.paidDate,
+        tenant: payment.lease?.tenant
+          ? `${payment.lease.tenant.firstName} ${payment.lease.tenant.lastName}`.trim()
+          : null
+      }))
+    });
+  })
+);
+
+router.post(
+  "/units/:id/cashflow/payments/:paymentId/mark-paid",
+  asyncHandler(async (req, res) => {
+    const unit = await prisma.unit.findFirst({
+      where: { id: req.params.id, organizationId: req.auth?.organizationId }
+    });
+
+    if (!unit) {
+      sendError(res, 404, "UNIT_NOT_FOUND", "Unit not found");
+      return;
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        id: req.params.paymentId,
+        organizationId: req.auth?.organizationId,
+        lease: { unitId: unit.id }
+      }
+    });
+
+    if (!payment) {
+      sendError(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
+      return;
+    }
+
+    const updated = await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: "PAID",
+        paidDate: new Date()
+      }
+    });
+
+    res.json(updated);
+  })
+);
+
+router.post(
+  "/units/:id/cashflow/payments/:paymentId/remind",
+  asyncHandler(async (req, res) => {
+    const unit = await prisma.unit.findFirst({
+      where: { id: req.params.id, organizationId: req.auth?.organizationId },
+      include: { property: { select: { name: true } } }
+    });
+
+    if (!unit) {
+      sendError(res, 404, "UNIT_NOT_FOUND", "Unit not found");
+      return;
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        id: req.params.paymentId,
+        organizationId: req.auth?.organizationId,
+        lease: { unitId: unit.id }
+      },
+      include: {
+        lease: { include: { tenant: true } }
+      }
+    });
+
+    if (!payment) {
+      sendError(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
+      return;
+    }
+
+    const tenantName = payment.lease?.tenant
+      ? `${payment.lease.tenant.firstName} ${payment.lease.tenant.lastName}`.trim()
+      : "tenant";
+
+    await prisma.notification.create({
+      data: {
+        userId: req.auth?.userId ?? "",
+        organizationId: req.auth?.organizationId ?? "",
+        type: "PAYMENT_REMINDER",
+        message: `Reminder logged for ${tenantName} for unit ${unit.label} (${unit.property.name}).`
+      }
+    });
+
+    res.json({
+      ok: true,
+      message: "Payment reminder logged."
+    });
+  })
+);
+
 router.patch(
   "/units/:id",
   asyncHandler(async (req, res) => {

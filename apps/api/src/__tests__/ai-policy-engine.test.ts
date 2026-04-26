@@ -65,4 +65,50 @@ describe("ai-policy-engine", () => {
       expect(result.denied.phase).toBe("plan");
     }
   });
+
+  it("blocks member from high-cost maintenance create above $500", () => {
+    const decision = evaluateAiWriteActionPolicy({
+      role: "MEMBER",
+      toolName: "createMaintenanceRequest",
+      args: { propertyId: "p1", title: "Emergency plumbing", cost: 750 },
+      phase: "plan"
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain("$500");
+  });
+
+  it("allows admin for high-cost maintenance create above $500", () => {
+    const decision = evaluateAiWriteActionPolicy({
+      role: "ADMIN",
+      toolName: "createMaintenanceRequest",
+      args: { propertyId: "p1", title: "Roof fix", cost: 1200 },
+      phase: "execute"
+    });
+
+    expect(decision.allowed).toBe(true);
+  });
+
+  it("blocks member from high-cost maintenance update above $500", () => {
+    const decision = evaluateAiWriteActionPolicy({
+      role: "MEMBER",
+      toolName: "updateMaintenanceRequest",
+      args: { id: "m1", patch: { cost: 650 } },
+      phase: "execute"
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain("OWNER or ADMIN");
+  });
+
+  it("allows member maintenance update at or below $500", () => {
+    const decision = evaluateAiWriteActionPolicy({
+      role: "MEMBER",
+      toolName: "updateMaintenanceRequest",
+      args: { id: "m1", patch: { cost: 500 } },
+      phase: "execute"
+    });
+
+    expect(decision.allowed).toBe(true);
+  });
 });

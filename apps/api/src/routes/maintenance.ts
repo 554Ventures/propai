@@ -6,6 +6,15 @@ import { Prisma, MaintenanceStatus, ServiceCategory } from "@prisma/client";
 
 const router: Router = Router();
 
+const parseMaintenanceCost = (value: number | string | undefined) => {
+  if (value === undefined || value === null || value === "") return { ok: true as const, cost: null as number | null };
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { ok: false as const, cost: null as number | null };
+  }
+  return { ok: true as const, cost: parsed };
+};
+
 // GET /maintenance?propertyId={id} - Fetch maintenance requests for a property
 router.get(
   "/maintenance",
@@ -21,8 +30,7 @@ router.get(
     const property = await prisma.property.findFirst({
       where: {
         id: propertyId,
-        organizationId: req.auth?.organizationId,
-        archivedAt: null
+        organizationId: req.auth?.organizationId
       }
     });
 
@@ -94,13 +102,18 @@ router.post(
     const property = await prisma.property.findFirst({
       where: {
         id: propertyId,
-        organizationId: req.auth?.organizationId,
-        archivedAt: null
+        organizationId: req.auth?.organizationId
       }
     });
 
     if (!property) {
       sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
+      return;
+    }
+
+    const parsedCost = parseMaintenanceCost(cost);
+    if (!parsedCost.ok) {
+      sendError(res, 400, "VALIDATION_ERROR", "cost must be a non-negative number");
       return;
     }
 
@@ -145,7 +158,7 @@ router.post(
         tenantId: tenantId || null,
         title,
         description: description || null,
-        cost: cost ? Number(cost) : null,
+        cost: parsedCost.cost,
         status: "PENDING"
       },
       include: {
@@ -203,13 +216,19 @@ router.patch(
       return;
     }
 
+    const parsedCost = parseMaintenanceCost(cost);
+    if (!parsedCost.ok) {
+      sendError(res, 400, "VALIDATION_ERROR", "cost must be a non-negative number");
+      return;
+    }
+
     const updated = await prisma.maintenanceRequest.update({
       where: { id },
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
         ...(status !== undefined && { status }),
-        ...(cost !== undefined && { cost: cost ? Number(cost) : null })
+        ...(cost !== undefined && { cost: parsedCost.cost })
       },
       include: {
         unit: true,
@@ -251,8 +270,7 @@ router.get(
     const property = await prisma.property.findFirst({
       where: {
         id: propertyId,
-        organizationId: req.auth?.organizationId,
-        archivedAt: null
+        organizationId: req.auth?.organizationId
       }
     });
 
@@ -354,13 +372,18 @@ router.post(
     const property = await prisma.property.findFirst({
       where: {
         id: propertyId,
-        organizationId: req.auth?.organizationId,
-        archivedAt: null
+        organizationId: req.auth?.organizationId
       }
     });
 
     if (!property) {
       sendError(res, 404, "PROPERTY_NOT_FOUND", "Property not found");
+      return;
+    }
+
+    const parsedCost = parseMaintenanceCost(cost);
+    if (!parsedCost.ok) {
+      sendError(res, 400, "VALIDATION_ERROR", "cost must be a non-negative number");
       return;
     }
 
@@ -405,7 +428,7 @@ router.post(
         tenantId: tenantId || null,
         title,
         description: description || null,
-        cost: cost ? Number(cost) : null,
+        cost: parsedCost.cost,
         status: "PENDING"
       },
       include: {

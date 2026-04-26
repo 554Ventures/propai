@@ -9,6 +9,8 @@ type ActionPolicy = {
   allowedRoles: OrgRole[];
 };
 
+export const AI_MAINTENANCE_APPROVAL_THRESHOLD_USD = 500;
+
 export type PolicyDecision = {
   allowed: boolean;
   toolName: AiActionToolName;
@@ -29,16 +31,17 @@ const ACTION_POLICIES: Record<AiActionToolName, ActionPolicy> = {
   deleteProperty: { risk: "high", allowedRoles: ["OWNER", "ADMIN"] },
   updateTenant: { risk: "high", allowedRoles: ["OWNER", "ADMIN"] },
   deleteTenant: { risk: "high", allowedRoles: ["OWNER", "ADMIN"] },
-  updateMaintenanceRequest: { risk: "high", allowedRoles: ["OWNER", "ADMIN"] },
+  updateMaintenanceRequest: { risk: "high", allowedRoles: ["OWNER", "ADMIN", "MEMBER"] },
   deleteMaintenanceRequest: { risk: "high", allowedRoles: ["OWNER", "ADMIN"] }
 };
 
 export const evaluateAiWriteActionPolicy = (opts: {
   role: OrgRole;
   toolName: AiActionToolName;
+  args?: Record<string, unknown>;
   phase: PolicyPhase;
 }): PolicyDecision => {
-  const { role, toolName, phase } = opts;
+  const { role, toolName, args, phase } = opts;
   const policy = ACTION_POLICIES[toolName];
   if (!policy) {
     return {
@@ -60,6 +63,29 @@ export const evaluateAiWriteActionPolicy = (opts: {
     };
   }
 
+  // High-cost maintenance changes require manager approval (OWNER/ADMIN).
+  if (toolName === "createMaintenanceRequest" || toolName === "updateMaintenanceRequest") {
+    const costRaw =
+      toolName === "updateMaintenanceRequest"
+        ? (args?.patch as Record<string, unknown> | undefined)?.cost
+        : args?.cost;
+    const cost = Number(costRaw);
+
+    if (
+      Number.isFinite(cost) &&
+      cost > AI_MAINTENANCE_APPROVAL_THRESHOLD_USD &&
+      role === "MEMBER"
+    ) {
+      return {
+        allowed: false,
+        toolName,
+        risk: "high",
+        reason: `Maintenance actions above $${AI_MAINTENANCE_APPROVAL_THRESHOLD_USD} require OWNER or ADMIN approval`,
+        phase
+      };
+    }
+  }
+
   return {
     allowed: true,
     toolName,
@@ -75,7 +101,12 @@ export const evaluateAiWritePlanPolicy = (opts: {
 }): { allowed: true; decisions: PolicyDecision[] } | { allowed: false; denied: PolicyDecision; decisions: PolicyDecision[] } => {
   const { role, toolCalls, phase } = opts;
   const decisions = toolCalls.map((call) =>
-    evaluateAiWriteActionPolicy({ role, toolName: call.toolName, phase })
+    evaluateAiWriteActionPolicy({
+      role,
+      toolName: call.toolName,
+      args: (call.args ?? {}) as Record<string, unknown>,
+      phase
+    })
   );
 
   const denied = decisions.find((d) => !d.allowed);

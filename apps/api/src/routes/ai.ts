@@ -700,7 +700,8 @@ const actionToolDefinitions = [
       additionalProperties: false as const,
       properties: {
         propertyId: { type: "string" as const },
-        title: { type: "string" as const }
+        title: { type: "string" as const },
+        cost: { type: "number" as const, description: "Estimated maintenance cost in USD" }
       },
       required: ["propertyId", "title"] as const
     },

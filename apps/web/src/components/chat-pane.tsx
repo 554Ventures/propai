@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { apiFetch } from "../lib/api";
+import { API_URL, apiFetch } from "../lib/api";
+import { getStoredToken } from "../lib/auth";
 import { Button } from "./ui/button";
 import { CHAT_SEND_EVENT } from "../lib/chat-events";
 
@@ -217,7 +218,7 @@ export default function ChatPane() {
         setError(null);
         setLoading(true);
         const query = sessionId ? `?sessionId=${sessionId}` : "";
-        const data = await apiFetch<ChatHistoryResponse>(`/api/chat/history${query}`, { auth: true });
+        const data = await apiFetch<ChatHistoryResponse>(`/api/agent/history${query}`, { auth: true });
         const resolved = data.sessionId ?? sessionId;
         if (resolved) {
           localStorage.setItem(STORAGE_KEY, resolved);
@@ -237,7 +238,7 @@ export default function ChatPane() {
   const refreshSessions = useCallback(async () => {
     try {
       setSessionsLoading(true);
-      const data = await apiFetch<{ sessions: ChatSessionSummary[] } | ChatSessionSummary[]>("/api/chat/sessions", {
+      const data = await apiFetch<{ sessions: ChatSessionSummary[] } | ChatSessionSummary[]>("/api/agent/sessions", {
         auth: true
       });
       const list = Array.isArray(data) ? data : data.sessions;
@@ -266,6 +267,7 @@ export default function ChatPane() {
       if (loading) return;
       const trimmed = text.trim();
       if (!trimmed) return;
+      const assistantId = `assistant-stream-${Date.now()}`;
 
       const optimisticMessage: ChatMessage = {
         id: `local-${Date.now()}`,
@@ -274,7 +276,14 @@ export default function ChatPane() {
         createdAt: new Date().toISOString()
       };
 
-      setMessages((prev) => [...prev, optimisticMessage]);
+      const streamingMessage: ChatMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        createdAt: new Date().toISOString()
+      };
+
+      setMessages((prev) => [...prev, optimisticMessage, streamingMessage]);
       setInput("");
       setError(null);
       setLoading(true);
@@ -283,9 +292,13 @@ export default function ChatPane() {
       try {
         const selectedPendingActionId = pendingActionIdRef.current;
 
-        const data = await apiFetch<AiChatResponse>("/ai/chat", {
+        const token = getStoredToken();
+        const response = await fetch(`${API_URL}/api/agent`, {
           method: "POST",
-          auth: true,
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
           body: JSON.stringify({
             message: trimmed,
             pendingActionId: selectedPendingActionId,
@@ -293,119 +306,122 @@ export default function ChatPane() {
           })
         });
 
-        if (data.sessionId) {
-          localStorage.setItem(STORAGE_KEY, data.sessionId);
-          setActiveSessionId(data.sessionId);
+        if (!response.ok || !response.body) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body?.error ?? "Failed to send message");
         }
 
-        if (data.mode === "chat") {
-          setPendingActionId(null);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `assistant-${Date.now()}`,
-              role: "assistant",
-              content: data.message,
-              createdAt: new Date().toISOString()
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamError: string | null = null;
+
+        const applyEvent = (eventName: string, payload: Record<string, unknown>) => {
+          if (eventName === "session" || eventName === "done") {
+            const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
+            if (sessionId) {
+              localStorage.setItem(STORAGE_KEY, sessionId);
+              setActiveSessionId(sessionId);
             }
-          ]);
-          void refreshSessions();
-          return;
-        }
-
-        if (data.mode === "clarify" || data.mode === "draft") {
-          setPendingActionId(data.pendingActionId);
-
-          if (data.mode === "clarify" && !data.draft) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `assistant-clarify-${Date.now()}`,
-                role: "assistant",
-                content: data.summary || "I need a bit more info to continue.",
-                createdAt: new Date().toISOString()
-              }
-            ]);
-            focusInput();
-            return;
           }
 
-          const defaultClarifyContent =
-            data.mode === "clarify"
-              ? data.summary || "I need one more detail to finish this. Please choose an option below."
-              : "";
+          if (eventName === "message_delta") {
+            const delta = typeof payload.text === "string" ? payload.text : "";
+            if (!delta) return;
+            setPendingActionId(null);
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantId
+                  ? { ...msg, content: `${msg.content.startsWith("Checking ") ? "" : msg.content}${delta}` }
+                  : msg
+              )
+            );
+          }
 
-          const assistantMessage: ChatMessage = {
-            id: `${data.mode === "clarify" ? "assistant-clarify" : "assistant-draft"}-${Date.now()}`,
-            role: "assistant",
-            content: defaultClarifyContent,
-            createdAt: new Date().toISOString(),
-            metadata: {
-              aiDraft: {
-                planId: data.pendingActionId,
-                kind: data.draft?.kind ?? "",
-                summary: data.summary,
-                requiresConfirm: data.mode === "draft" ? (data.requiresConfirm ?? true) : false,
-                fields: data.draft?.fields ?? {},
-                toolCalls: data.draft?.toolCalls ?? [],
-                clarify:
-                  data.mode === "clarify"
-                    ? {
-                        missing: data.clarify?.missing,
-                        choices: data.clarify?.choices ?? []
+          if (eventName === "tool_call_started") {
+            const toolName = typeof payload.toolName === "string" ? payload.toolName : "tool";
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === assistantId && !msg.content ? { ...msg, content: `Checking ${toolName}...` } : msg))
+            );
+          }
+
+          if (eventName === "draft" || eventName === "clarify") {
+            const data = payload as Extract<AiChatResponse, { mode: "draft" | "clarify" }>;
+            setPendingActionId(data.pendingActionId);
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantId
+                  ? {
+                      ...msg,
+                      content: data.mode === "clarify" ? data.summary || "I need a bit more info to continue." : "",
+                      metadata: {
+                        aiDraft: {
+                          planId: data.pendingActionId,
+                          kind: data.draft?.kind ?? "",
+                          summary: data.summary,
+                          requiresConfirm: data.mode === "draft" ? (data.requiresConfirm ?? true) : false,
+                          fields: data.draft?.fields ?? {},
+                          toolCalls: data.draft?.toolCalls ?? [],
+                          clarify:
+                            data.mode === "clarify"
+                              ? { missing: data.clarify?.missing, choices: data.clarify?.choices ?? [] }
+                              : undefined
+                        }
                       }
-                    : undefined
-              }
-            }
-          };
+                    }
+                  : msg
+              )
+            );
+          }
 
-          setMessages((prev) => [...prev, assistantMessage]);
-          focusInput();
-          return;
-        }
+          if (eventName === "error") {
+            streamError = typeof payload.error === "string" ? payload.error : "Agent request failed";
+          }
+        };
 
-        if (data.mode === "result") {
-          setPendingActionId(null);
-          const assistantMessage: ChatMessage = {
-            id: `assistant-result-${Date.now()}`,
-            role: "assistant",
-            content: "",
-            createdAt: new Date().toISOString(),
-            metadata: {
-              aiReceipt: {
-                title: data.receipt?.title ?? "Saved",
-                href: data.receipt?.href,
-                detail: data.receipt?.detail
-              },
-              aiResult: {
-                title: data.receipt?.title ?? "Result",
-                detail: data.receipt?.detail,
-                payload: data.result
-              }
+        const drainBuffer = () => {
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary !== -1) {
+            const raw = buffer.slice(0, boundary).trim();
+            buffer = buffer.slice(boundary + 2);
+            const eventLine = raw.split("\n").find((line) => line.startsWith("event:"));
+            const dataLine = raw.split("\n").find((line) => line.startsWith("data:"));
+            const eventName = eventLine?.replace("event:", "").trim() || "message";
+            const dataText = dataLine?.replace("data:", "").trim() || "{}";
+            try {
+              applyEvent(eventName, JSON.parse(dataText));
+            } catch {
+              // Ignore malformed stream events.
             }
-          };
-          setMessages((prev) => [...prev, assistantMessage]);
-          void refreshSessions();
-          return;
+            boundary = buffer.indexOf("\n\n");
+          }
+        };
+
+        let reading = true;
+        while (reading) {
+          const { done, value } = await reader.read();
+          if (done) {
+            reading = false;
+            continue;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          drainBuffer();
         }
+        buffer += decoder.decode();
+        drainBuffer();
+
+        if (streamError) throw new Error(streamError);
+        void refreshSessions();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to send message";
         setError(message);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `assistant-error-${Date.now()}`,
-            role: "assistant",
-            content: "",
-            createdAt: new Date().toISOString(),
-            metadata: {
-              aiError: {
-                title: "Something went wrong",
-                detail: message
-              }
-            }
-          }
-        ]);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId
+              ? { ...msg, content: "", metadata: { aiError: { title: "Something went wrong", detail: message } } }
+              : msg
+          )
+        );
       } finally {
         setLoading(false);
       }
@@ -431,7 +447,7 @@ export default function ChatPane() {
     setMessages([]);
     setActiveSessionId(null);
     try {
-      const data = await apiFetch<{ sessionId: string }>("/api/chat/sessions", {
+      const data = await apiFetch<{ sessionId: string }>("/api/agent/sessions", {
         method: "POST",
         auth: true
       });
@@ -455,10 +471,10 @@ export default function ChatPane() {
     const planId = lastDraft?.planId;
     if (planId) {
       try {
-        await apiFetch<{ ok: true }>("/ai/cancel", {
+        await apiFetch<{ ok: true }>("/api/agent/cancel", {
           method: "POST",
           auth: true,
-          body: JSON.stringify({ actionId: planId })
+          body: JSON.stringify({ pendingActionId: planId })
         });
       } catch {
         // Non-fatal.
@@ -485,7 +501,7 @@ export default function ChatPane() {
     setMessages([]);
 
     try {
-      await apiFetch<{ ok: true }>(`/api/chat/sessions/${sessionId}/clear`, {
+      await apiFetch<{ ok: true }>(`/api/agent/sessions/${sessionId}/clear`, {
         method: "POST",
         auth: true
       });
@@ -511,11 +527,10 @@ export default function ChatPane() {
     setError(null);
     setConfirmingPlanId(planId);
     try {
-      const data = await apiFetch<AiChatResponse>("/ai/chat", {
+      const data = await apiFetch<AiChatResponse>("/api/agent/confirm", {
         method: "POST",
         auth: true,
         body: JSON.stringify({
-          confirm: true,
           pendingActionId: planId,
           sessionId: localStorage.getItem(STORAGE_KEY) ?? undefined,
           clientRequestId: crypto.randomUUID?.() ?? String(Date.now())
@@ -584,10 +599,10 @@ export default function ChatPane() {
   const cancelDraft = useCallback(async (planId: string) => {
     setError(null);
     try {
-      await apiFetch<{ ok: true }>("/ai/cancel", {
+      await apiFetch<{ ok: true }>("/api/agent/cancel", {
         method: "POST",
         auth: true,
-        body: JSON.stringify({ actionId: planId })
+        body: JSON.stringify({ pendingActionId: planId })
       });
       setMessages((prev) =>
         prev.map((msg) => {

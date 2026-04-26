@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Building, Users, Home } from "lucide-react";
+import { Building, Home } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { 
   Button, 
@@ -26,9 +26,22 @@ type Property = {
   postalCode: string;
   country: string;
   unitCount?: number;
+  occupiedCount?: number;
+  activeLeaseCount?: number;
   vacancyCount?: number;
+  overduePaymentCount?: number;
+  openMaintenanceCount?: number;
+  expiringLeaseCount30?: number;
+  aiPrediction?: {
+    label: string;
+    reason: string;
+    confidence: number;
+    priority: "HIGH" | "MEDIUM" | "LOW";
+  };
   archivedAt?: string | null;
 };
+
+type ListView = "all" | "attention" | "stable";
 
 export default function PropertiesPage() {
   const [properties, setProperties] = useState<Property[]>([]);
@@ -38,18 +51,43 @@ export default function PropertiesPage() {
   const [archiveModalProperty, setArchiveModalProperty] = useState<Property | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [listView, setListView] = useState<ListView>("all");
 
   const showToast = (message: string) => {
     setSuccessMessage(message);
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  const filteredProperties = properties.filter(property => {
+  const filteredByArchive = properties.filter((property) => {
     if (showArchived) {
       return !!property.archivedAt;
     }
     return !property.archivedAt;
   });
+
+  const propertyNeedsAttention = (property: Property) => {
+    return (
+      (property.overduePaymentCount ?? 0) > 0 ||
+      (property.expiringLeaseCount30 ?? 0) > 0 ||
+      (property.vacancyCount ?? 0) > 0 ||
+      (property.openMaintenanceCount ?? 0) > 0
+    );
+  };
+
+  const filteredProperties = filteredByArchive.filter((property) => {
+    if (showArchived) return true;
+    if (listView === "attention") return propertyNeedsAttention(property);
+    if (listView === "stable") return !propertyNeedsAttention(property);
+    return true;
+  });
+
+  const activeProperties = properties.filter((property) => !property.archivedAt);
+  const attentionCount = activeProperties.filter((property) => propertyNeedsAttention(property)).length;
+  const overdueCount = activeProperties.reduce((sum, property) => sum + (property.overduePaymentCount ?? 0), 0);
+  const maintenanceOpenCount = activeProperties.reduce(
+    (sum, property) => sum + (property.openMaintenanceCount ?? 0),
+    0
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -93,7 +131,7 @@ export default function PropertiesPage() {
       setArchiveModalProperty(null);
     } catch (err: unknown) {
       const code = (err as { code?: string; message?: string })?.code;
-      if (code === "PROPERTY_HAS_ACTIVE_LEASES") {
+      if (code === "ACTIVE_LEASES_EXIST") {
         setError("Cannot archive property with active leases. End all leases first.");
       } else {
         setError(err instanceof Error ? err.message : "Failed to archive property.");
@@ -107,7 +145,7 @@ export default function PropertiesPage() {
     <div>
       <PageHeader
         title="Properties"
-        description="Track assets, unit counts, and performance."
+        description="Track portfolio health and take action quickly."
         action={
           <PageHeaderAction.Group>
             <div className="flex gap-2">
@@ -136,6 +174,40 @@ export default function PropertiesPage() {
       {error && <Text variant="error" size="sm" className="mb-4">{error}</Text>}
       {successMessage && <Text variant="success" size="sm" className="mb-4">{successMessage}</Text>}
 
+      {!showArchived && (
+        <div className="mb-6 grid gap-4 md:grid-cols-3">
+          <DataCard title="Needs Attention" value={attentionCount} detail="Properties with urgent items" />
+          <DataCard title="Overdue Rent" value={overdueCount} detail="Late or past-due payment items" />
+          <DataCard title="Open Maintenance" value={maintenanceOpenCount} detail="Pending or in-progress requests" />
+        </div>
+      )}
+
+      {!showArchived && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <Badge
+            variant={listView === "all" ? "default" : "outline"}
+            className="cursor-pointer px-4 py-2"
+            onClick={() => setListView("all")}
+          >
+            All
+          </Badge>
+          <Badge
+            variant={listView === "attention" ? "warning" : "outline"}
+            className="cursor-pointer px-4 py-2"
+            onClick={() => setListView("attention")}
+          >
+            Attention Needed
+          </Badge>
+          <Badge
+            variant={listView === "stable" ? "success" : "outline"}
+            className="cursor-pointer px-4 py-2"
+            onClick={() => setListView("stable")}
+          >
+            Stable
+          </Badge>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
         {loading &&
           Array.from({ length: 2 }).map((_, index) => (
@@ -154,7 +226,10 @@ export default function PropertiesPage() {
             }
             action={
               <DataCardAction.Button
-                onClick={() => setArchiveModalProperty(property)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setArchiveModalProperty(property);
+                }}
                 disabled={archiveLoading}
               >
                 {property.archivedAt ? "Unarchive" : "Archive"}
@@ -171,7 +246,43 @@ export default function PropertiesPage() {
                   value: property.vacancyCount ?? 0,
                   variant: property.vacancyCount && property.vacancyCount > 0 ? 'warning' : 'default',
                 },
+                {
+                  label: "Overdue",
+                  value: property.overduePaymentCount ?? 0,
+                  variant: (property.overduePaymentCount ?? 0) > 0 ? "error" : "default"
+                },
+                {
+                  label: "Open Maint",
+                  value: property.openMaintenanceCount ?? 0,
+                  variant: (property.openMaintenanceCount ?? 0) > 0 ? "warning" : "default"
+                }
               ] : undefined
+            }
+            footer={
+              !property.archivedAt && property.aiPrediction ? (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      size="sm"
+                      variant={
+                        property.aiPrediction.priority === "HIGH"
+                          ? "error"
+                          : property.aiPrediction.priority === "MEDIUM"
+                          ? "warning"
+                          : "success"
+                      }
+                    >
+                      AI: {property.aiPrediction.label}
+                    </Badge>
+                    <Text size="xs" variant="muted">
+                      {(property.aiPrediction.confidence * 100).toFixed(0)}% confidence
+                    </Text>
+                  </div>
+                  <Text size="xs" variant="muted" className="max-w-[280px]">
+                    {property.aiPrediction.reason}
+                  </Text>
+                </div>
+              ) : undefined
             }
             onClick={() => window.location.href = `/properties/${property.id}`}
             variant="interactive"

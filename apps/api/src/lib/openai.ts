@@ -18,3 +18,7 @@ export const getOpenAIClient = () => {
 export const getOpenAIModel = () => {
   return process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 };
+
+export const getAgentOpenAIModel = () => {
+  return process.env.AI_AGENT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1";
+};

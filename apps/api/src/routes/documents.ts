@@ -116,4 +116,59 @@ router.get(
   })
 );
 
+router.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { name } = req.body as { name?: string };
+
+    if (!name?.trim()) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    const existing = await prisma.document.findFirst({
+      where: { id, organizationId: req.auth?.organizationId }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: "Document not found" });
+      return;
+    }
+
+    const updated = await prisma.document.update({
+      where: { id: existing.id },
+      data: { name: name.trim() }
+    });
+
+    res.json(updated);
+  })
+);
+
+router.delete(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const existing = await prisma.document.findFirst({
+      where: { id, organizationId: req.auth?.organizationId }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: "Document not found" });
+      return;
+    }
+
+    await prisma.document.delete({ where: { id: existing.id } });
+
+    // Best-effort file cleanup for locally stored documents.
+    if (existing.url?.startsWith("/uploads/")) {
+      const filePath = path.resolve(uploadDir, path.basename(existing.url));
+      fs.promises.unlink(filePath).catch(() => undefined);
+    }
+
+    res.status(204).send();
+  })
+);
+
 export default router;

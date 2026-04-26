@@ -31,11 +31,13 @@ type Tenant = {
 
 type Lease = {
   id: string;
+  tenantId?: string;
   startDate: string;
   endDate?: string | null;
   rent: number;
   status: "DRAFT" | "ACTIVE" | "ENDED";
   tenant: Tenant;
+  unit?: { id: string; label: string };
 };
 
 type UnitWithLease = {
@@ -57,6 +59,41 @@ type MaintenanceRequest = {
   createdAt: string;
   unit?: { id: string; label: string } | null;
   tenant?: { id: string; firstName: string; lastName: string } | null;
+};
+
+type DocumentRecord = {
+  id: string;
+  name: string;
+  type: string;
+  url: string;
+  leaseId?: string | null;
+  createdAt: string;
+};
+
+type UnitCashflow = {
+  unitId: string;
+  summary: {
+    collected: number;
+    outstanding: number;
+  };
+  recentPayments: Array<{
+    id: string;
+    amount: number;
+    status: "PENDING" | "PAID" | "LATE" | "FAILED";
+    dueDate: string;
+    paidDate?: string | null;
+    tenant?: string | null;
+  }>;
+};
+
+type ForecastPoint = {
+  period: string;
+  net: number;
+};
+
+type PropertyForecast = {
+  confidence: number;
+  projection: ForecastPoint[];
 };
 
 const friendlyError = (err: unknown, fallback: string) => {
@@ -123,8 +160,6 @@ export default function PropertyDetailPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
 
-  const [viewLease, setViewLease] = useState<Lease | null>(null);
-
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [endLeaseUnit, setEndLeaseUnit] = useState<UnitWithLease | null>(null);
   const [endLeaseLoading, setEndLeaseLoading] = useState(false);
@@ -154,6 +189,29 @@ export default function PropertyDetailPage() {
   });
   const [maintenanceFormSaving, setMaintenanceFormSaving] = useState(false);
   const [maintenanceFormError, setMaintenanceFormError] = useState<string | null>(null);
+  const [showEditPropertyModal, setShowEditPropertyModal] = useState(false);
+  const [activeUnitWorkspaceId, setActiveUnitWorkspaceId] = useState<string | null>(null);
+  const [unitWorkspaceOpen, setUnitWorkspaceOpen] = useState(false);
+  const [showPropertyMaintenancePanel, setShowPropertyMaintenancePanel] = useState(false);
+  const [leaseHistory, setLeaseHistory] = useState<Lease[]>([]);
+  const [forecast, setForecast] = useState<PropertyForecast | null>(null);
+  const [forecastError, setForecastError] = useState<string | null>(null);
+  const [workspaceCashflow, setWorkspaceCashflow] = useState<UnitCashflow | null>(null);
+  const [workspaceDocs, setWorkspaceDocs] = useState<DocumentRecord[]>([]);
+  const [workspaceDataLoading, setWorkspaceDataLoading] = useState(false);
+  const [workspaceDataError, setWorkspaceDataError] = useState<string | null>(null);
+  const [docUploadError, setDocUploadError] = useState<string | null>(null);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docUploadType, setDocUploadType] = useState("LEASE");
+  const [docUploadName, setDocUploadName] = useState("");
+  const [docUploadLeaseId, setDocUploadLeaseId] = useState("");
+  const [docUploadFile, setDocUploadFile] = useState<File | null>(null);
+  const [docRenamingId, setDocRenamingId] = useState<string | null>(null);
+  const [docRenamingValue, setDocRenamingValue] = useState("");
+  const [docDeleteBusyId, setDocDeleteBusyId] = useState<string | null>(null);
+  const [cashflowTimeframe, setCashflowTimeframe] = useState<"30d" | "90d" | "12m" | "all">("90d");
+  const [cashflowActionError, setCashflowActionError] = useState<string | null>(null);
+  const [cashflowActionBusyId, setCashflowActionBusyId] = useState<string | null>(null);
 
   // Archive-related state
   const [showArchiveModal, setShowArchiveModal] = useState(false);
@@ -234,6 +292,73 @@ export default function PropertyDetailPage() {
     }
   };
 
+  const loadLeaseHistory = useCallback(async () => {
+    try {
+      const data = await apiFetch<Lease[]>(`/leases?propertyId=${propertyId}`, { auth: true });
+      setLeaseHistory(data);
+    } catch {
+      setLeaseHistory([]);
+    }
+  }, [propertyId]);
+
+  const loadForecast = useCallback(async () => {
+    setForecastError(null);
+    try {
+      const data = await apiFetch<PropertyForecast>(
+        `/api/analytics/forecast?property_id=${propertyId}&time_range=monthly`,
+        { auth: true }
+      );
+      setForecast(data);
+    } catch (err) {
+      setForecast(null);
+      setForecastError(err instanceof Error ? err.message : "Unable to load forecast");
+    }
+  }, [propertyId]);
+
+  useEffect(() => {
+    if (!propertyId) return;
+    void loadLeaseHistory();
+    void loadForecast();
+  }, [propertyId, loadLeaseHistory, loadForecast]);
+
+  const relationshipSnapshot = useMemo(() => {
+    const unitCount = units.length;
+    const activeLeases = leaseHistory.filter((lease) => lease.status === "ACTIVE");
+    const endedLeases = leaseHistory.filter((lease) => lease.status === "ENDED");
+    const tenantIds = new Set(
+      leaseHistory
+        .map((lease) => lease.tenant?.id ?? lease.tenantId)
+        .filter((tenantId): tenantId is string => Boolean(tenantId))
+    );
+    const openMaintenance = maintenance.filter((request) => request.status !== "COMPLETED");
+    const latestProjection = forecast?.projection?.[0] ?? null;
+
+    return {
+      unitCount,
+      activeLeaseCount: activeLeases.length,
+      endedLeaseCount: endedLeases.length,
+      tenantCount: tenantIds.size,
+      openMaintenanceCount: openMaintenance.length,
+      latestProjection,
+      forecastConfidence: forecast?.confidence ?? null
+    };
+  }, [units, leaseHistory, maintenance, forecast]);
+
+  const activeUnitWorkspace = useMemo(
+    () => units.find((unit) => unit.id === activeUnitWorkspaceId) ?? null,
+    [units, activeUnitWorkspaceId]
+  );
+
+  const activeUnitLeaseHistory = useMemo(() => {
+    if (!activeUnitWorkspace) return [];
+    return leaseHistory.filter((lease) => lease.unit?.id === activeUnitWorkspace.id);
+  }, [activeUnitWorkspace, leaseHistory]);
+
+  const activeUnitMaintenance = useMemo(() => {
+    if (!activeUnitWorkspace) return [];
+    return maintenance.filter((request) => request.unit?.id === activeUnitWorkspace.id);
+  }, [activeUnitWorkspace, maintenance]);
+
   const update = (key: keyof Property, value: string) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
@@ -251,6 +376,7 @@ export default function PropertyDetailPage() {
         body: JSON.stringify(form)
       });
       setForm(updated);
+      setShowEditPropertyModal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update property");
     } finally {
@@ -612,16 +738,201 @@ export default function PropertyDetailPage() {
     }
   };
 
-  const openMaintenanceForm = () => {
+  const openMaintenanceForm = (unitId?: string) => {
     setMaintenanceForm({
       title: "",
       description: "",
-      scope: "property",
-      unitId: "",
+      scope: unitId ? "unit" : "property",
+      unitId: unitId ?? "",
       cost: ""
     });
     setMaintenanceFormError(null);
     setShowMaintenanceForm(true);
+  };
+
+  const openUnitWorkspace = (unitId: string) => {
+    setActiveUnitWorkspaceId(unitId);
+    setWorkspaceDataError(null);
+    setDocUploadError(null);
+    setCashflowActionError(null);
+  };
+
+  const closeUnitWorkspace = () => {
+    setUnitWorkspaceOpen(false);
+    setTimeout(() => {
+      setActiveUnitWorkspaceId(null);
+      setWorkspaceCashflow(null);
+      setWorkspaceDocs([]);
+      setDocUploadFile(null);
+      setDocUploadName("");
+      setDocUploadLeaseId("");
+    }, 260);
+  };
+
+  useEffect(() => {
+    if (!activeUnitWorkspaceId) {
+      setUnitWorkspaceOpen(false);
+      return;
+    }
+    const timer = setTimeout(() => setUnitWorkspaceOpen(true), 20);
+    return () => clearTimeout(timer);
+  }, [activeUnitWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeUnitWorkspaceId) return;
+
+    const leaseIds = new Set(activeUnitLeaseHistory.map((lease) => lease.id));
+
+    const loadWorkspaceData = async () => {
+      setWorkspaceDataLoading(true);
+      setWorkspaceDataError(null);
+      try {
+        const [cashflow, docs] = await Promise.all([
+          apiFetch<UnitCashflow>(`/units/${activeUnitWorkspaceId}/cashflow?timeframe=${cashflowTimeframe}`, { auth: true }),
+          apiFetch<DocumentRecord[]>(`/api/documents?propertyId=${propertyId}`, { auth: true })
+        ]);
+
+        setWorkspaceCashflow(cashflow);
+        setWorkspaceDocs(docs.filter((doc) => !!doc.leaseId && leaseIds.has(doc.leaseId)));
+      } catch (err) {
+        setWorkspaceDataError(err instanceof Error ? err.message : "Failed to load workspace data");
+      } finally {
+        setWorkspaceDataLoading(false);
+      }
+    };
+
+    void loadWorkspaceData();
+  }, [activeUnitWorkspaceId, activeUnitLeaseHistory, propertyId, cashflowTimeframe]);
+
+  useEffect(() => {
+    if (!activeUnitWorkspace?.currentLease?.id) {
+      setDocUploadLeaseId("");
+      return;
+    }
+    setDocUploadLeaseId(activeUnitWorkspace.currentLease.id);
+  }, [activeUnitWorkspace]);
+
+  const uploadUnitDocument = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!docUploadFile) {
+      setDocUploadError("Please choose a file.");
+      return;
+    }
+
+    setDocUploading(true);
+    setDocUploadError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", docUploadFile);
+      formData.append("propertyId", propertyId);
+      formData.append("type", docUploadType);
+      if (docUploadName.trim()) {
+        formData.append("name", docUploadName.trim());
+      }
+      if (docUploadLeaseId) {
+        formData.append("leaseId", docUploadLeaseId);
+      }
+
+      await apiFetch<{ document: DocumentRecord }>("/api/documents/upload", {
+        method: "POST",
+        auth: true,
+        body: formData
+      });
+
+      setDocUploadFile(null);
+      setDocUploadName("");
+      showToast("Document uploaded.");
+
+      if (activeUnitWorkspaceId) {
+        const leaseIds = new Set(activeUnitLeaseHistory.map((lease) => lease.id));
+        const docs = await apiFetch<DocumentRecord[]>(`/api/documents?propertyId=${propertyId}`, { auth: true });
+        setWorkspaceDocs(docs.filter((doc) => !!doc.leaseId && leaseIds.has(doc.leaseId)));
+      }
+    } catch (err) {
+      setDocUploadError(err instanceof Error ? err.message : "Failed to upload document");
+    } finally {
+      setDocUploading(false);
+    }
+  };
+
+  const renameWorkspaceDocument = async (docId: string) => {
+    const nextName = docRenamingValue.trim();
+    if (!nextName) {
+      setDocUploadError("Document name cannot be empty.");
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/documents/${docId}`, {
+        method: "PATCH",
+        auth: true,
+        body: JSON.stringify({ name: nextName })
+      });
+
+      setWorkspaceDocs((prev) => prev.map((doc) => (doc.id === docId ? { ...doc, name: nextName } : doc)));
+      setDocRenamingId(null);
+      setDocRenamingValue("");
+      showToast("Document renamed.");
+    } catch (err) {
+      setDocUploadError(err instanceof Error ? err.message : "Failed to rename document");
+    }
+  };
+
+  const deleteWorkspaceDocument = async (docId: string) => {
+    setDocDeleteBusyId(docId);
+    setDocUploadError(null);
+    try {
+      await apiFetch(`/api/documents/${docId}`, {
+        method: "DELETE",
+        auth: true
+      });
+      setWorkspaceDocs((prev) => prev.filter((doc) => doc.id !== docId));
+      showToast("Document removed.");
+    } catch (err) {
+      setDocUploadError(err instanceof Error ? err.message : "Failed to delete document");
+    } finally {
+      setDocDeleteBusyId(null);
+    }
+  };
+
+  const markPaymentPaid = async (paymentId: string) => {
+    if (!activeUnitWorkspaceId) return;
+    setCashflowActionBusyId(paymentId);
+    setCashflowActionError(null);
+    try {
+      await apiFetch(`/units/${activeUnitWorkspaceId}/cashflow/payments/${paymentId}/mark-paid`, {
+        method: "POST",
+        auth: true
+      });
+      const cashflow = await apiFetch<UnitCashflow>(
+        `/units/${activeUnitWorkspaceId}/cashflow?timeframe=${cashflowTimeframe}`,
+        { auth: true }
+      );
+      setWorkspaceCashflow(cashflow);
+      showToast("Payment marked as paid.");
+    } catch (err) {
+      setCashflowActionError(err instanceof Error ? err.message : "Failed to mark payment paid");
+    } finally {
+      setCashflowActionBusyId(null);
+    }
+  };
+
+  const remindPayment = async (paymentId: string) => {
+    if (!activeUnitWorkspaceId) return;
+    setCashflowActionBusyId(paymentId);
+    setCashflowActionError(null);
+    try {
+      await apiFetch(`/units/${activeUnitWorkspaceId}/cashflow/payments/${paymentId}/remind`, {
+        method: "POST",
+        auth: true
+      });
+      showToast("Reminder logged.");
+    } catch (err) {
+      setCashflowActionError(err instanceof Error ? err.message : "Failed to log reminder");
+    } finally {
+      setCashflowActionBusyId(null);
+    }
   };
 
   const submitMaintenanceRequest = async (event: FormEvent) => {
@@ -722,9 +1033,12 @@ export default function PropertyDetailPage() {
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-400">Update address and portfolio notes.</p>
+          <p className="text-sm text-slate-400">Run daily unit and tenant operations from the unit workspace.</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setShowEditPropertyModal(true)}>
+            Edit Property
+          </Button>
           <Button
             variant="secondary"
             onClick={() => setShowArchiveModal(true)}
@@ -738,84 +1052,64 @@ export default function PropertyDetailPage() {
         </div>
       </div>
 
-      <form onSubmit={onSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
-        <div className="md:col-span-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Property Name</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.name}
-            onChange={(event) => update("name", event.target.value)}
-            required
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Address Line 1</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.addressLine1}
-            onChange={(event) => update("addressLine1", event.target.value)}
-            required
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Address Line 2</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.addressLine2 ?? ""}
-            onChange={(event) => update("addressLine2", event.target.value)}
-          />
-        </div>
-        <div>
-          <label className="text-xs uppercase tracking-wide text-slate-400">City</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.city}
-            onChange={(event) => update("city", event.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-xs uppercase tracking-wide text-slate-400">State</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.state}
-            onChange={(event) => update("state", event.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-xs uppercase tracking-wide text-slate-400">Postal Code</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.postalCode}
-            onChange={(event) => update("postalCode", event.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-xs uppercase tracking-wide text-slate-400">Country</label>
-          <input
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            value={form.country}
-            onChange={(event) => update("country", event.target.value)}
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400">Notes</label>
-          <textarea
-            className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
-            rows={3}
-            value={form.notes ?? ""}
-            onChange={(event) => update("notes", event.target.value)}
-          />
+      <section className="mt-6 rounded-2xl border border-slate-800/70 bg-slate-950/50 p-5">
+        <p className="text-xs uppercase tracking-wide text-slate-400">Property Overview</p>
+        <p className="mt-2 text-sm text-slate-200">
+          {form.addressLine1}
+          {form.addressLine2 ? `, ${form.addressLine2}` : ""}, {form.city}, {form.state} {form.postalCode} {form.country}
+        </p>
+        {form.notes ? <p className="mt-2 text-sm text-slate-400">{form.notes}</p> : null}
+      </section>
+
+      <section className="mt-10 rounded-2xl border border-slate-800/70 bg-slate-950/50 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-semibold">Relationship Snapshot</h3>
+            <p className="text-sm text-slate-400">
+              Property &rarr; Units &rarr; Leases &rarr; Tenants &rarr; Maintenance
+            </p>
+          </div>
+          {relationshipSnapshot.forecastConfidence !== null && (
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+              AI confidence {(relationshipSnapshot.forecastConfidence * 100).toFixed(0)}%
+            </span>
+          )}
         </div>
 
-        {error && <div className="md:col-span-2 text-sm text-rose-300">{error}</div>}
-
-        <div className="md:col-span-2 flex justify-end">
-          <Button disabled={loading}>{loading ? "Saving..." : "Save changes"}</Button>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Units</p>
+            <p className="mt-2 text-2xl font-semibold">{relationshipSnapshot.unitCount}</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Leases</p>
+            <p className="mt-2 text-2xl font-semibold">{relationshipSnapshot.activeLeaseCount}</p>
+            <p className="text-xs text-slate-400">Active</p>
+            <p className="text-xs text-slate-500">{relationshipSnapshot.endedLeaseCount} ended</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Tenants</p>
+            <p className="mt-2 text-2xl font-semibold">{relationshipSnapshot.tenantCount}</p>
+            <p className="text-xs text-slate-400">Across active and past leases</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Maintenance</p>
+            <p className="mt-2 text-2xl font-semibold">{relationshipSnapshot.openMaintenanceCount}</p>
+            <p className="text-xs text-slate-400">Open requests</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-400">AI Net Forecast</p>
+            <p className="mt-2 text-2xl font-semibold">
+              {relationshipSnapshot.latestProjection
+                ? formatCurrency(relationshipSnapshot.latestProjection.net)
+                : "—"}
+            </p>
+            <p className="text-xs text-slate-400">Next projected period</p>
+          </div>
         </div>
-      </form>
+
+        {forecastError && <p className="mt-3 text-xs text-amber-300">{forecastError}</p>}
+      </section>
 
       <section className="mt-12">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -823,7 +1117,12 @@ export default function PropertyDetailPage() {
             <h3 className="text-xl font-semibold">Units</h3>
             <p className="text-sm text-slate-400">Track occupancy and assign tenants.</p>
           </div>
-          <Button onClick={openAddUnit}>Add Unit</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setShowPropertyMaintenancePanel((current) => !current)}>
+              {showPropertyMaintenancePanel ? "Hide Maintenance" : "View All Maintenance"}
+            </Button>
+            <Button onClick={openAddUnit}>Add Unit</Button>
+          </div>
         </div>
 
         {unitsError && <p className="mt-4 text-sm text-rose-300">{unitsError}</p>}
@@ -881,37 +1180,8 @@ export default function PropertyDetailPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {occupied ? (
-                    <>
-                      <Button variant="secondary" onClick={() => setViewLease(lease ?? null)}>
-                        View Lease
-                      </Button>
-                      {lease?.status === "ACTIVE" && (
-                        <Button variant="secondary" onClick={() => openEditLease(lease)}>
-                          Edit Lease
-                        </Button>
-                      )}
-                    </>
-                  ) : (
-                    <Button onClick={() => openLeaseFlow(unit)}>Add Tenant</Button>
-                  )}
-
-                  {lease?.status === "ACTIVE" && (
-                    <Button variant="destructive" onClick={() => setEndLeaseUnit(unit)}>
-                      End Lease
-                    </Button>
-                  )}
-
-                  <Button variant="secondary" onClick={() => openEditUnit(unit)}>
-                    Edit
-                  </Button>
-
-                  <Button
-                    variant="secondary"
-                    onClick={() => void deactivateUnit(unit.id)}
-                    disabled={unitsLoading || unitSaving}
-                  >
-                    Deactivate
+                  <Button onClick={() => openUnitWorkspace(unit.id)}>
+                    Open Unit Workspace
                   </Button>
                 </div>
               </div>
@@ -926,25 +1196,26 @@ export default function PropertyDetailPage() {
         </div>
       </section>
 
-      <section className="mt-12">
+      {showPropertyMaintenancePanel && (
+      <section className="mt-8 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h3 className="text-xl font-semibold">Maintenance</h3>
+            <h3 className="text-xl font-semibold">Property Maintenance</h3>
             <p className="text-sm text-slate-400">Track maintenance requests and work orders.</p>
           </div>
-          <Button onClick={openMaintenanceForm}>Create Request</Button>
+          <Button onClick={() => openMaintenanceForm()}>Create Request</Button>
         </div>
 
         {maintenanceError && <p className="mt-4 text-sm text-rose-300">{maintenanceError}</p>}
 
         <div className="mt-6">
           {/* Filter Controls */}
-          <div className="mb-6 space-y-4">
+          <div className="mb-6 space-y-4 rounded-xl border border-slate-800/70 bg-slate-900/50 p-3 md:p-4">
             {/* Unit Filter Dropdown */}
             <div>
               <label className="block text-xs uppercase tracking-wide text-slate-400 mb-2">Filter by Unit</label>
               <select
-                className="rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-2 text-slate-100 text-sm min-w-[200px]"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-2 text-slate-100 text-sm md:w-auto md:min-w-[220px]"
                 value={maintenanceUnitFilter}
                 onChange={(e) => {
                   const newFilter = e.target.value;
@@ -965,11 +1236,11 @@ export default function PropertyDetailPage() {
             {/* Status Filter Buttons */}
             <div>
               <label className="block text-xs uppercase tracking-wide text-slate-400 mb-2">Filter by Status</label>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex gap-2 overflow-x-auto pb-1 md:flex-wrap">
                 {(["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"] as const).map((status) => (
                   <button
                     key={status}
-                    className={`rounded-full border px-4 py-2 text-sm ${
+                    className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-sm ${
                       maintenanceStatusFilter === status
                         ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
                         : "border-slate-700/70 text-slate-300"
@@ -1122,6 +1393,433 @@ export default function PropertyDetailPage() {
           )}
         </div>
       </section>
+      )}
+
+      {showEditPropertyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-3xl rounded-2xl border border-slate-700/70 bg-slate-900/95 p-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h4 className="text-lg font-semibold">Edit Property Details</h4>
+              <button
+                type="button"
+                className="text-sm text-slate-400 hover:text-slate-200"
+                onClick={() => setShowEditPropertyModal(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={onSubmit} className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="text-xs uppercase tracking-wide text-slate-400">Property Name</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.name}
+                  onChange={(event) => update("name", event.target.value)}
+                  required
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs uppercase tracking-wide text-slate-400">Address Line 1</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.addressLine1}
+                  onChange={(event) => update("addressLine1", event.target.value)}
+                  required
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs uppercase tracking-wide text-slate-400">Address Line 2</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.addressLine2 ?? ""}
+                  onChange={(event) => update("addressLine2", event.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">City</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.city}
+                  onChange={(event) => update("city", event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">State</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.state}
+                  onChange={(event) => update("state", event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Postal Code</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.postalCode}
+                  onChange={(event) => update("postalCode", event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Country</label>
+                <input
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  value={form.country}
+                  onChange={(event) => update("country", event.target.value)}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs uppercase tracking-wide text-slate-400">Notes</label>
+                <textarea
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100"
+                  rows={3}
+                  value={form.notes ?? ""}
+                  onChange={(event) => update("notes", event.target.value)}
+                />
+              </div>
+
+              {error && <div className="md:col-span-2 text-sm text-rose-300">{error}</div>}
+
+              <div className="md:col-span-2 flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setShowEditPropertyModal(false)}>
+                  Cancel
+                </Button>
+                <Button disabled={loading}>{loading ? "Saving..." : "Save changes"}</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeUnitWorkspace && (
+        <div
+          className={`fixed inset-0 z-50 flex justify-end bg-slate-950/80 transition-opacity duration-300 ${
+            unitWorkspaceOpen ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={closeUnitWorkspace}
+        >
+          <div
+            className={`h-full w-full max-w-2xl overflow-y-auto border-l border-slate-700/70 bg-slate-950/95 p-4 md:p-6 shadow-2xl transition-all duration-300 ease-out ${
+              unitWorkspaceOpen ? "translate-x-0 opacity-100" : "translate-x-8 opacity-0"
+            }`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 -mx-4 mb-2 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/95 px-4 pb-3 pt-1 md:-mx-6 md:px-6">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-400">Unit Workspace</p>
+                <h4 className="text-xl font-semibold">{activeUnitWorkspace.label}</h4>
+                <p className="text-sm text-slate-400">
+                  {activeUnitWorkspace.bedrooms ?? "—"} bd • {activeUnitWorkspace.bathrooms ?? "—"} ba • {activeUnitWorkspace.squareFeet ?? "—"} sqft
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-sm text-slate-400 hover:text-slate-200"
+                onClick={closeUnitWorkspace}
+              >
+                Close
+              </button>
+            </div>
+
+            {workspaceDataError && <p className="mt-3 text-sm text-rose-300">{workspaceDataError}</p>}
+
+            <div className="mt-6 rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-400">Current Tenancy</p>
+              {activeUnitWorkspace.currentLease ? (
+                <>
+                  <p className="mt-2 text-base text-slate-100">
+                    {activeUnitWorkspace.currentLease.tenant.firstName} {activeUnitWorkspace.currentLease.tenant.lastName}
+                  </p>
+                  <p className="text-sm text-slate-400">
+                    {formatDate(activeUnitWorkspace.currentLease.startDate)} &rarr; {formatDate(activeUnitWorkspace.currentLease.endDate)}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-300">Rent: {formatCurrency(activeUnitWorkspace.currentLease.rent)}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => openEditLease(activeUnitWorkspace.currentLease!)}>
+                      Edit Lease
+                    </Button>
+                    <Button variant="destructive" onClick={() => setEndLeaseUnit(activeUnitWorkspace)}>
+                      End Lease
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-2 text-sm text-slate-400">No active lease. Assign a tenant to start operations.</p>
+                  <div className="mt-3">
+                    <Button onClick={() => openLeaseFlow(activeUnitWorkspace)}>Assign Tenant</Button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Unit Cashflow</p>
+                <div className="flex w-full gap-1 overflow-x-auto pb-1 sm:w-auto">
+                  {([
+                    { key: "30d", label: "30d" },
+                    { key: "90d", label: "90d" },
+                    { key: "12m", label: "12m" },
+                    { key: "all", label: "All" }
+                  ] as const).map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      className={`whitespace-nowrap rounded-full border px-3 py-1 text-xs ${
+                        cashflowTimeframe === option.key
+                          ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
+                          : "border-slate-700/70 text-slate-300"
+                      }`}
+                      onClick={() => setCashflowTimeframe(option.key)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {workspaceDataLoading ? (
+                <p className="mt-3 text-sm text-slate-400">Loading cashflow...</p>
+              ) : (
+                <>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3">
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Collected</p>
+                      <p className="mt-1 text-lg font-semibold text-emerald-200">
+                        {formatCurrency(workspaceCashflow?.summary.collected ?? 0)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3">
+                      <p className="text-xs uppercase tracking-wide text-slate-400">Outstanding</p>
+                      <p className="mt-1 text-lg font-semibold text-amber-200">
+                        {formatCurrency(workspaceCashflow?.summary.outstanding ?? 0)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {cashflowActionError && <p className="mt-3 text-sm text-rose-300">{cashflowActionError}</p>}
+
+                  <div className="mt-3 space-y-2">
+                    {(workspaceCashflow?.recentPayments ?? []).slice(0, 5).map((payment) => (
+                      <div key={payment.id} className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-slate-100">{payment.tenant ?? "Tenant"}</p>
+                            <p className="text-xs text-slate-400">Due {formatDate(payment.dueDate)}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-slate-100">{formatCurrency(payment.amount)}</p>
+                            <p className="text-xs text-slate-400">{payment.status}</p>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                          {payment.status !== "PAID" && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => markPaymentPaid(payment.id)}
+                              disabled={cashflowActionBusyId === payment.id}
+                            >
+                              Mark Paid
+                            </Button>
+                          )}
+                          <Button
+                            variant="secondary"
+                            onClick={() => remindPayment(payment.id)}
+                            disabled={cashflowActionBusyId === payment.id}
+                          >
+                            Remind
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    {(workspaceCashflow?.recentPayments?.length ?? 0) === 0 && (
+                      <p className="text-sm text-slate-400">No payment history for this unit yet.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Lease History</p>
+                <Button variant="secondary" onClick={() => openEditUnit(activeUnitWorkspace)}>
+                  Edit Unit
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {activeUnitLeaseHistory.length === 0 ? (
+                  <p className="text-sm text-slate-400">No past leases for this unit yet.</p>
+                ) : (
+                  activeUnitLeaseHistory.map((lease) => (
+                    <div key={lease.id} className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3">
+                      <p className="text-sm text-slate-200">
+                        {lease.tenant.firstName} {lease.tenant.lastName} • {lease.status}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {formatDate(lease.startDate)} &rarr; {formatDate(lease.endDate)} • {formatCurrency(lease.rent)}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Maintenance for this Unit</p>
+                <Button onClick={() => openMaintenanceForm(activeUnitWorkspace.id)}>Create Request</Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {activeUnitMaintenance.length === 0 ? (
+                  <p className="text-sm text-slate-400">No maintenance requests for this unit.</p>
+                ) : (
+                  activeUnitMaintenance.map((request) => (
+                    <div key={request.id} className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-slate-100">{request.title}</p>
+                          <p className="text-xs text-slate-400">{formatDate(request.createdAt)}</p>
+                          {request.cost ? <p className="text-xs text-slate-400">Cost: {formatCurrency(request.cost)}</p> : null}
+                        </div>
+                        <span className="rounded-full bg-slate-800/70 px-2 py-1 text-xs text-slate-300">
+                          {request.status.replace("_", " ")}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-400">Documents</p>
+
+              <form onSubmit={uploadUnitDocument} className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-slate-400">Type</label>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                    value={docUploadType}
+                    onChange={(event) => setDocUploadType(event.target.value)}
+                  >
+                    <option value="LEASE">Lease</option>
+                    <option value="INSPECTION">Inspection</option>
+                    <option value="RECEIPT">Receipt</option>
+                    <option value="INSURANCE">Insurance</option>
+                    <option value="TAX">Tax</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-slate-400">Lease Link</label>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                    value={docUploadLeaseId}
+                    onChange={(event) => setDocUploadLeaseId(event.target.value)}
+                  >
+                    <option value="">No lease link</option>
+                    {activeUnitLeaseHistory.map((lease) => (
+                      <option key={lease.id} value={lease.id}>
+                        {lease.tenant.firstName} {lease.tenant.lastName} ({lease.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs uppercase tracking-wide text-slate-400">Display Name (optional)</label>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                    value={docUploadName}
+                    onChange={(event) => setDocUploadName(event.target.value)}
+                    placeholder="Lease Addendum - Unit 2A"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs uppercase tracking-wide text-slate-400">File</label>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                    type="file"
+                    onChange={(event) => setDocUploadFile(event.target.files?.[0] ?? null)}
+                  />
+                </div>
+                {docUploadError && <p className="md:col-span-2 text-sm text-rose-300">{docUploadError}</p>}
+                <div className="md:col-span-2 flex justify-end">
+                  <Button disabled={docUploading}>{docUploading ? "Uploading..." : "Upload Document"}</Button>
+                </div>
+              </form>
+
+              <div className="mt-4 space-y-2">
+                {workspaceDocs.length === 0 ? (
+                  <p className="text-sm text-slate-400">No lease-linked documents for this unit yet.</p>
+                ) : (
+                  workspaceDocs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-3"
+                    >
+                      {docRenamingId === doc.id ? (
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <input
+                            className="w-full rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                            value={docRenamingValue}
+                            onChange={(event) => setDocRenamingValue(event.target.value)}
+                          />
+                          <Button variant="secondary" onClick={() => renameWorkspaceDocument(doc.id)}>
+                            Save
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setDocRenamingId(null);
+                              setDocRenamingValue("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="min-w-0 flex-1 hover:text-cyan-200"
+                          >
+                            <p className="truncate text-sm text-slate-100">{doc.name}</p>
+                            <p className="text-xs text-slate-400">{doc.type} • {formatDate(doc.createdAt)}</p>
+                          </a>
+                          <div className="flex gap-2 self-start">
+                            <Button
+                              variant="secondary"
+                              onClick={() => {
+                                setDocRenamingId(doc.id);
+                                setDocRenamingValue(doc.name);
+                              }}
+                            >
+                              Rename
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={() => deleteWorkspaceDocument(doc.id)}
+                              disabled={docDeleteBusyId === doc.id}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal dialogs */}
       {showAddUnit && (
@@ -1405,31 +2103,6 @@ export default function PropertyDetailPage() {
                 </div>
               </form>
             )}
-          </div>
-        </div>
-      )}
-
-      {viewLease && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-700/70 bg-slate-900/90 p-6 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h4 className="text-lg font-semibold">Lease Details</h4>
-              <button
-                className="text-sm text-slate-400 hover:text-slate-200"
-                onClick={() => setViewLease(null)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="mt-4 space-y-2 text-sm text-slate-300">
-              <p>
-                Tenant: {viewLease.tenant.firstName} {viewLease.tenant.lastName}
-              </p>
-              <p>Start: {formatDate(viewLease.startDate)}</p>
-              <p>End: {formatDate(viewLease.endDate)}</p>
-              <p>Rent: {formatCurrency(viewLease.rent)}</p>
-              <p>Status: {viewLease.status}</p>
-            </div>
           </div>
         </div>
       )}

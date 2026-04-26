@@ -9,10 +9,12 @@ const router: Router = Router();
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const includeArchived = req.query.includeArchived === 'true';
+    const includeArchived = req.query.includeArchived === "true";
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     
     const rows = await prisma.property.findMany({
-      where: { 
+      where: {
         organizationId: req.auth?.organizationId,
         ...(includeArchived ? {} : { archivedAt: null })
       },
@@ -30,11 +32,113 @@ router.get(
       }
     });
 
-    const properties = rows.map(({ units, ...property }) => ({
-      ...property,
-      unitCount: units.length,
-      vacancyCount: units.filter((u) => u.leases.length === 0).length
-    }));
+    const propertyIds = rows.map((property) => property.id);
+    const [openMaintenance, overduePayments, expiringLeases] = await Promise.all([
+      prisma.maintenanceRequest.findMany({
+        where: {
+          organizationId: req.auth?.organizationId,
+          propertyId: { in: propertyIds },
+          status: { in: ["PENDING", "IN_PROGRESS"] }
+        },
+        select: { propertyId: true }
+      }),
+      prisma.payment.findMany({
+        where: {
+          organizationId: req.auth?.organizationId,
+          propertyId: { in: propertyIds },
+          OR: [{ status: "LATE" }, { status: "PENDING", dueDate: { lt: now } }]
+        },
+        select: { propertyId: true }
+      }),
+      prisma.lease.findMany({
+        where: {
+          organizationId: req.auth?.organizationId,
+          propertyId: { in: propertyIds },
+          status: "ACTIVE",
+          endDate: { gte: now, lte: in30Days }
+        },
+        select: { propertyId: true, endDate: true }
+      })
+    ]);
+
+    const maintenanceByProperty = openMaintenance.reduce<Record<string, number>>((acc, row) => {
+      acc[row.propertyId] = (acc[row.propertyId] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    const overdueByProperty = overduePayments.reduce<Record<string, number>>((acc, row) => {
+      acc[row.propertyId] = (acc[row.propertyId] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    const expiringByProperty = expiringLeases.reduce<Record<string, number>>((acc, row) => {
+      acc[row.propertyId] = (acc[row.propertyId] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    const properties = rows.map(({ units, ...property }) => {
+      const unitCount = units.length;
+      const occupiedCount = units.filter((unit) => unit.leases.length > 0).length;
+      const vacancyCount = Math.max(0, unitCount - occupiedCount);
+      const activeLeaseCount = occupiedCount;
+      const overduePaymentCount = overdueByProperty[property.id] ?? 0;
+      const openMaintenanceCount = maintenanceByProperty[property.id] ?? 0;
+      const expiringLeaseCount30 = expiringByProperty[property.id] ?? 0;
+
+      let aiPrediction: {
+        label: string;
+        reason: string;
+        confidence: number;
+        priority: "HIGH" | "MEDIUM" | "LOW";
+      } = {
+        label: "Stable this week",
+        reason: "No urgent rent, lease, or maintenance issues detected.",
+        confidence: 0.72,
+        priority: "LOW"
+      };
+
+      if (overduePaymentCount > 0) {
+        aiPrediction = {
+          label: `${overduePaymentCount} overdue rent item${overduePaymentCount > 1 ? "s" : ""}`,
+          reason: "Prioritize rent follow-up to protect monthly cash flow.",
+          confidence: 0.86,
+          priority: "HIGH"
+        };
+      } else if (expiringLeaseCount30 > 0) {
+        aiPrediction = {
+          label: `${expiringLeaseCount30} lease${expiringLeaseCount30 > 1 ? "s" : ""} expiring in 30 days`,
+          reason: "Start renewal outreach early to reduce vacancy risk.",
+          confidence: 0.81,
+          priority: "HIGH"
+        };
+      } else if (vacancyCount > 0) {
+        aiPrediction = {
+          label: `${vacancyCount} vacant unit${vacancyCount > 1 ? "s" : ""}`,
+          reason: "Listing and showing these units can recover income quickly.",
+          confidence: 0.79,
+          priority: "MEDIUM"
+        };
+      } else if (openMaintenanceCount > 0) {
+        aiPrediction = {
+          label: `${openMaintenanceCount} open maintenance request${openMaintenanceCount > 1 ? "s" : ""}`,
+          reason: "Clearing maintenance backlog helps tenant retention.",
+          confidence: 0.75,
+          priority: "MEDIUM"
+        };
+      }
+
+      return {
+        ...property,
+        unitCount,
+        occupiedCount,
+        vacancyCount,
+        activeLeaseCount,
+        overduePaymentCount,
+        openMaintenanceCount,
+        expiringLeaseCount30,
+        aiPrediction
+      };
+    });
 
     res.json(properties);
   })
